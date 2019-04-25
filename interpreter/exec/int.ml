@@ -129,6 +129,7 @@ struct
   let check_unop_concrete unop x = match x with
       C.Concrete x' -> C.Concrete (unop x')
     | _ -> failwith "TODO"
+
   let check_relop_concrete relop x y = match (x,y) with
       (C.Concrete x', C.Concrete y') -> relop x' y'
     | _ -> failwith "TODO"
@@ -136,10 +137,22 @@ struct
       C.Concrete x' -> unop x'
     | _ -> failwith "TODO"
 
+  let to_bv_const x = (Z3.BitVector.mk_numeral C.ctx (Rep.to_string x) Rep.bitwidth)
+
+  let cased_binop concrete_func symbolic_func x y =
+    match (x,y) with (C.Concrete x', C.Concrete y') -> C.Concrete (concrete_func x' y')
+                   | (C.Concrete x', C.Symbolic y') -> C.Symbolic (symbolic_func (to_bv_const x') y')
+                   | (C.Symbolic x', C.Concrete y') -> C.Symbolic (symbolic_func x' (to_bv_const y'))
+                   | (C.Symbolic x', C.Symbolic y') -> C.Symbolic (symbolic_func x' y')
+
+  let cased_unop_bare concrete_func symbolic_func x =
+    match x with C.Concrete x' -> concrete_func x'
+               | C.Symbolic x' -> symbolic_func x'
+
   (* add, sub, and mul are sign-agnostic and do not trap on overflow. *)
-  let add = check_binop_concrete Rep.add
-  let sub = check_binop_concrete Rep.sub
-  let mul = check_binop_concrete Rep.mul
+  let add = cased_binop Rep.add (Z3.BitVector.mk_add C.ctx)
+  let sub = cased_binop Rep.sub (Z3.BitVector.mk_sub C.ctx)
+  let mul = cased_binop Rep.mul (Z3.BitVector.mk_mul C.ctx)
 
   (* result is truncated toward zero *)
   let div_s' x y =
@@ -149,12 +162,20 @@ struct
       raise Numeric_error.IntegerOverflow
     else
       Rep.div x y
-  let div_s = check_binop_concrete div_s'
+  let div_s'' x y =
+    (* TODO Handle divide-by-zero and integer-overflow conditions (different paths / not straightline) *)
+    Z3.BitVector.mk_sdiv C.ctx x y
+ 
+  let div_s = cased_binop div_s' div_s''
 
   (* result is floored (which is the same as truncating for unsigned values) *)
   let div_u' x y =
     let q, r = divrem_u x y in q
-  let div_u = check_binop_concrete div_u'
+  let div_u'' x y =
+    (* TODO Handle divide-by-zero and integer-overflow conditions (different paths / not straightline) *)
+    Z3.BitVector.mk_udiv C.ctx x y
+
+  let div_u = cased_binop div_u' div_u''
 
   (* result has the sign of the dividend *)
   let rem_s' x y =
@@ -162,43 +183,43 @@ struct
       raise Numeric_error.IntegerDivideByZero
     else
       Rep.rem x y
-  let rem_s = check_binop_concrete rem_s'
+  let rem_s'' x y =
+    (* TODO Handle divide-by-zero (different paths / not straightline) *)
+    Z3.BitVector.mk_srem C.ctx x y
+  let rem_s = cased_binop rem_s' rem_s''
 
   let rem_u' x y =
     let q, r = divrem_u x y in r
-  let rem_u = check_binop_concrete rem_u'
+  let rem_u'' x y =
+    (* TODO Handle divide-by-zero (different paths / not straightline) *)
+    Z3.BitVector.mk_urem C.ctx x y
+  let rem_u = cased_binop rem_u' rem_u''
 
-  let and_ = check_binop_concrete Rep.logand
-  let or_ = check_binop_concrete Rep.logor
-  let xor = check_binop_concrete Rep.logxor
+  let and_ = cased_binop Rep.logand (Z3.BitVector.mk_and C.ctx)
+  let or_ = cased_binop Rep.logor (Z3.BitVector.mk_or C.ctx)
+  let xor = cased_binop Rep.logxor (Z3.BitVector.mk_xor C.ctx)
 
   (* WebAssembly's shifts mask the shift count according to the bitwidth. *)
-  let shift' f x y =
+  let shift f x y =
     f x (Rep.to_int (Rep.logand y (Rep.of_int (Rep.bitwidth - 1))))
-  let shift f = check_binop_concrete (shift' f)
 
-  let shl x y =
-    shift Rep.shift_left x y
+  let shl = cased_binop (shift Rep.shift_left) (Z3.BitVector.mk_shl C.ctx)
 
-  let shr_s x y =
-    shift Rep.shift_right x y
+  let shr_s = cased_binop (shift Rep.shift_right) (Z3.BitVector.mk_ashr C.ctx)
 
-  let shr_u x y =
-    shift Rep.shift_right_logical x y
+  let shr_u = cased_binop (shift Rep.shift_right_logical) (Z3.BitVector.mk_lshr C.ctx)
 
   (* We must mask the count to implement rotates via shifts. *)
   let clamp_rotate_count n =
-    Rep.to_int (Rep.logand n (Rep.of_int (Rep.bitwidth - 1)))
+    and_ n (C.Concrete (Rep.of_int (Rep.bitwidth - 1)))
 
-  let rotl' x y =
+  let rotl x y =
     let n = clamp_rotate_count y in
-    Rep.logor (Rep.shift_left x n) (Rep.shift_right_logical x (Rep.bitwidth - n))
-  let rotl = check_binop_concrete rotl'
+    or_ (shl x n) (shr_u x (sub (C.Concrete (Rep.of_int Rep.bitwidth)) n))
 
-  let rotr' x y =
+  let rotr x y =
     let n = clamp_rotate_count y in
-    Rep.logor (Rep.shift_right_logical x n) (Rep.shift_left x (Rep.bitwidth - n))
-  let rotr = check_binop_concrete rotr'
+    or_ (shr_u x n) (shl x (sub (C.Concrete (Rep.of_int Rep.bitwidth)) n))
 
   (* clz is defined for all values, including all-zeros. *)
   let clz' x =
@@ -210,6 +231,7 @@ struct
       else
         acc
     in Rep.of_int (loop 0 x)
+  (* TODO This is weird in z3, implement later *)
   let clz = check_unop_concrete clz'
 
   (* ctz is defined for all values, including all-zeros. *)
@@ -222,6 +244,7 @@ struct
       else
         loop (1 + acc) (Rep.shift_right_logical n 1)
     in Rep.of_int (loop 0 x)
+  (* TODO This is weird in z3, implement later *)
   let ctz = check_unop_concrete ctz'
 
   let popcnt' x =
@@ -232,8 +255,10 @@ struct
         let acc' = if Rep.logand n Rep.one = Rep.one then acc + 1 else acc in
         loop acc' (i - 1) (Rep.shift_right_logical n 1)
     in Rep.of_int (loop 0 Rep.bitwidth x)
+  (* TODO This is weird in z3, implement later *)
   let popcnt = check_unop_concrete popcnt'
 
+  (* TODO Need to thread through bool concreteness for these to work *)
   let eqz' x = x = Rep.zero
   let eqz = function C.Concrete x -> eqz' x
                    | C.Symbolic _ -> failwith "TODO"
@@ -263,7 +288,7 @@ struct
   let of_int_s i = C.Concrete (Rep.of_int i)
   let of_int_u i = and_ (C.Concrete (Rep.of_int i)) (or_ (shl (C.Concrete (Rep.of_int max_int)) one) one)
 
-  let to_string_s = check_unrelop_concrete Rep.to_string
+  let to_string_s = cased_unop_bare Rep.to_string (fun i -> "[[" ^ Z3.Expr.to_string i ^ "]]")
   let to_string_u' i =
     if i >= Rep.zero then
       Rep.to_string i
