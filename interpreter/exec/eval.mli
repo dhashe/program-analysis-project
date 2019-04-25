@@ -8,3 +8,4 @@ exception Exhaustion of Source.region * string
 
 val init : Ast.module_ -> extern list -> module_inst (* raises Link, Trap *)
 val invoke : func_inst -> value list -> value list (* raises Trap *)
+val symbolic_invoke : func_inst -> value list -> value list (* raises Trap *)

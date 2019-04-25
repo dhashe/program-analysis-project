@@ -5,8 +5,8 @@ open Memory
 open Ast
 
 
-let i32_const n = Const (I32 n.it @@ n.at)
-let i64_const n = Const (I64 n.it @@ n.at)
+let i32_const n = Const (I32 (I32.of_bits n.it) @@ n.at)
+let i64_const n = Const (I64 (I64.of_bits n.it) @@ n.at)
 let f32_const n = Const (F32 n.it @@ n.at)
 let f64_const n = Const (F64 n.it @@ n.at)
 

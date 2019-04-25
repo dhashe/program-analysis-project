@@ -203,12 +203,12 @@ let reinterpret_of = function
   | F64Type -> I64Type, Convert (Values.I64 I64Op.ReinterpretFloat)
 
 let canonical_nan_of = function
-  | I32Type | F32Type -> Values.I32 (F32.to_bits F32.pos_nan)
-  | I64Type | F64Type -> Values.I64 (F64.to_bits F64.pos_nan)
+  | I32Type | F32Type -> Values.I32 (I32.of_bits (F32.to_bits F32.pos_nan))
+  | I64Type | F64Type -> Values.I64 (I64.of_bits (F64.to_bits F64.pos_nan))
 
 let abs_mask_of = function
-  | I32Type | F32Type -> Values.I32 Int32.max_int
-  | I64Type | F64Type -> Values.I64 Int64.max_int
+  | I32Type | F32Type -> Values.I32 (I32.of_bits Int32.max_int)
+  | I64Type | F64Type -> Values.I64 (I64.of_bits Int64.max_int)
 
 let invoke ft lits at =
   [ft @@ at], FuncImport (1l @@ at) @@ at,
@@ -346,6 +346,8 @@ let of_action mods act =
       Some (of_wrapper mods x_opt name (invoke ft lits), out)
     | _ -> None
     )
+  | SymbolicInvoke (x_opt, name, lits) ->
+    failwith "Unimplemented"
   | Get (x_opt, name) ->
     "get(" ^ of_var_opt mods x_opt ^ ", " ^ of_name name ^ ")",
     (match lookup mods x_opt name act.at with

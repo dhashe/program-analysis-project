@@ -72,9 +72,9 @@ let u32 s =
   Int32.(add lo (shift_left hi 16))
 
 let u64 s =
-  let lo = I64_convert.extend_i32_u (u32 s) in
-  let hi = I64_convert.extend_i32_u (u32 s) in
-  Int64.(add lo (shift_left hi 32))
+  let lo = I64_convert.extend_i32_u (I32.of_bits (u32 s)) in
+  let hi = I64_convert.extend_i32_u (I32.of_bits (u32 s)) in
+  Int64.(add (I64.to_bits lo) (shift_left (I64.to_bits hi) 32))
 
 let rec vuN n s =
   require (n > 0) s (pos s) "integer representation too long";
@@ -105,7 +105,7 @@ let f64 s = F64.of_bits (u64 s)
 let len32 s =
   let pos = pos s in
   let n = vu32 s in
-  if I32.le_u n (Int32.of_int (len s)) then Int32.to_int n else
+  if I32.le_u (I32.of_bits n) (I32.of_bits (Int32.of_int (len s))) then Int32.to_int n else
     error s pos "length out of bounds"
 
 let bool s = (vu1 s = 1)
@@ -196,7 +196,7 @@ let end_ s = expect 0x0b s "END opcode expected"
 
 let memop s =
   let align = vu32 s in
-  require (I32.le_u align 32l) s (pos s - 1) "invalid memop flags";
+  require (I32.le_u (I32.of_bits align) (I32.of_bits 32l)) s (pos s - 1) "invalid memop flags";
   let offset = vu32 s in
   Int32.to_int align, offset
 
@@ -579,8 +579,8 @@ let local s =
 let code _ s =
   let pos = pos s in
   let nts = vec local s in
-  let ns = List.map (fun (n, _) -> I64_convert.extend_i32_u n) nts in
-  require (I64.lt_u (List.fold_left I64.add 0L ns) 0x1_0000_0000L)
+  let ns = List.map (fun (n, _) -> I64_convert.extend_i32_u (I32.of_bits n)) nts in
+  require (I64.lt_u (List.fold_left I64.add I64.zero ns) (I64.of_bits 0x1_0000_0000L))
     s pos "too many locals";
   let locals = List.flatten (List.map (Lib.Fun.uncurry Lib.List32.make) nts) in
   let body = instr_block s in

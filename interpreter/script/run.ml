@@ -304,6 +304,16 @@ let run_action act =
     | None -> Assert.error act.at "undefined export"
     )
 
+ | SymbolicInvoke (x_opt, name, vs) ->
+    trace ("Symbolically Invoking function \"" ^ Ast.string_of_name name ^ "\"...");
+    let inst = lookup_instance x_opt act.at in
+    (match Instance.export inst name with
+    | Some (Instance.ExternFunc f) ->
+      Eval.symbolic_invoke f (List.map (fun v -> v.it) vs)
+    | Some _ -> Assert.error act.at "export is not a function"
+    | None -> Assert.error act.at "undefined export"
+    )
+
  | Get (x_opt, name) ->
     trace ("Getting global \"" ^ Ast.string_of_name name ^ "\"...");
     let inst = lookup_instance x_opt act.at in

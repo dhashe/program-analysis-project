@@ -211,8 +211,8 @@ let encode m =
       | MemorySize -> op 0x3f; u8 0x00
       | MemoryGrow -> op 0x40; u8 0x00
 
-      | Const {it = I32 c; _} -> op 0x41; vs32 c
-      | Const {it = I64 c; _} -> op 0x42; vs64 c
+      | Const {it = I32 c; _} -> op 0x41; vs32 (I32.to_bits c)
+      | Const {it = I64 c; _} -> op 0x42; vs64 (I64.to_bits c)
       | Const {it = F32 c; _} -> op 0x43; f32 c
       | Const {it = F64 c; _} -> op 0x44; f64 c
 

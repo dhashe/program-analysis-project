@@ -46,7 +46,7 @@ let nat s at =
   with Failure _ -> error at "integer constant out of range"
 
 let nat32 s at =
-  try I32.of_string_u s with Failure _ -> error at "i32 constant out of range"
+  try I32.to_bits (I32.of_string_u s) with Failure _ -> error at "i32 constant out of range"
 
 let name s at =
   try Utf8.decode s with Utf8.Utf8 -> error at "invalid UTF-8 encoding"
@@ -117,7 +117,7 @@ let bind_label (c : context) x =
 let anon category space n =
   let i = space.count in
   space.count <- Int32.add space.count n;
-  if I32.lt_u space.count n then
+  if I32.lt_u (I32.of_bits space.count) (I32.of_bits n) then
     error no_region ("too many " ^ category ^ " bindings");
   i
 
@@ -155,7 +155,7 @@ let inline_type_explicit (c : context) x ft at =
 %token FUNC START TYPE PARAM RESULT LOCAL GLOBAL
 %token TABLE ELEM MEMORY DATA OFFSET IMPORT EXPORT TABLE
 %token MODULE BIN QUOTE
-%token SCRIPT REGISTER INVOKE GET
+%token SCRIPT REGISTER INVOKE SYMBOLICINVOKE GET
 %token ASSERT_MALFORMED ASSERT_INVALID ASSERT_SOFT_INVALID ASSERT_UNLINKABLE
 %token ASSERT_RETURN ASSERT_RETURN_CANONICAL_NAN ASSERT_RETURN_ARITHMETIC_NAN ASSERT_TRAP ASSERT_EXHAUSTION
 %token INPUT OUTPUT
@@ -279,7 +279,7 @@ labeling_end_opt :
 
 offset_opt :
   | /* empty */ { 0l }
-  | OFFSET_EQ_NAT { nat32 $1 (at ()) }
+  | OFFSET_EQ_NAT { (nat32 $1 (at ())) }
 
 align_opt :
   | /* empty */ { None }
@@ -783,6 +783,8 @@ script_module :
 action :
   | LPAR INVOKE module_var_opt name const_list RPAR
     { Invoke ($3, $4, $5) @@ at () }
+  | LPAR SYMBOLICINVOKE module_var_opt name const_list RPAR
+    { SymbolicInvoke ($3, $4, $5) @@ at () }
   | LPAR GET module_var_opt name RPAR
     { Get ($3, $4) @@ at() }
 

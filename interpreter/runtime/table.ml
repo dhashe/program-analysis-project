@@ -24,7 +24,9 @@ let create size =
   with Invalid_argument _ -> raise Out_of_memory
 
 let alloc (TableType ({min; max}, elem_type)) =
-  assert (within_limits min max);
+  let mint = I32.of_bits min in
+  let maxt = match max with None -> None | Some v -> Some (I32.of_bits v) in
+  assert (within_limits mint maxt);
   {content = create min; max; elem_type}
 
 let size tab =
@@ -36,8 +38,8 @@ let type_of tab =
 let grow tab delta =
   let old_size = size tab in
   let new_size = Int32.add old_size delta in
-  if I32.gt_u old_size new_size then raise SizeOverflow else
-  if not (within_limits new_size tab.max) then raise SizeLimit else
+  if I32.gt_u (I32.of_bits old_size) (I32.of_bits new_size) then raise SizeOverflow else
+  if not (within_limits (I32.of_bits new_size) (match tab.max with None -> None | Some v -> Some (I32.of_bits v))) then raise SizeLimit else
   let after = create new_size in
   Array.blit tab.content 0 after 0 (Array.length tab.content);
   tab.content <- after

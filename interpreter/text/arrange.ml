@@ -198,7 +198,7 @@ let extension = function
 
 let memop name {ty; align; offset; _} =
   value_type ty ^ "." ^ name ^
-  (if offset = 0l then "" else " offset=" ^ nat32 offset) ^
+  (if offset = 0l then "" else " offset=" ^ nat32 (I32.of_bits offset)) ^
   (if 1 lsl align = size ty then "" else " align=" ^ nat (1 lsl align))
 
 let loadop op =
@@ -214,7 +214,7 @@ let storeop op =
 
 (* Expressions *)
 
-let var x = nat32 x.it
+let var x = nat32 (I32.of_bits x.it)
 let value v = string_of_value v.it
 let constop v = value_type (type_of v.it) ^ ".const"
 
@@ -281,13 +281,13 @@ let start x = Node ("start " ^ var x, [])
 
 let table off i tab =
   let {ttype = TableType (lim, t)} = tab.it in
-  Node ("table $" ^ nat (off + i) ^ " " ^ limits nat32 lim,
+  Node ("table $" ^ nat (off + i) ^ " " ^ limits (fun i -> nat32 (I32.of_bits i)) lim,
     [atom elem_type t]
   )
 
 let memory off i mem =
   let {mtype = MemoryType lim} = mem.it in
-  Node ("memory $" ^ nat (off + i) ^ " " ^ limits nat32 lim, [])
+  Node ("memory $" ^ nat (off + i) ^ " " ^ limits (fun i -> nat32 (I32.of_bits i)) lim, [])
 
 let segment head dat seg =
   let {index; offset; init} = seg.it in
@@ -418,6 +418,8 @@ let action act =
   match act.it with
   | Invoke (x_opt, name, lits) ->
     Node ("invoke" ^ access x_opt name, List.map literal lits)
+  | SymbolicInvoke (x_opt, name, lits) ->
+    Node ("symbolic_invoke" ^ access x_opt name, List.map literal lits)
   | Get (x_opt, name) ->
     Node ("get" ^ access x_opt name, [])
 

@@ -37,10 +37,14 @@ let match_func_type ft1 ft2 =
   ft1 = ft2
 
 let match_table_type (TableType (lim1, et1)) (TableType (lim2, et2)) =
-  et1 = et2 && match_limits lim1 lim2
+  (* TODO FIX IMM *)
+  failwith "I32 concreteness"
+  (* et1 = et2 && match_limits lim1 lim2 *)
 
 let match_memory_type (MemoryType lim1) (MemoryType lim2) =
-  match_limits lim1 lim2
+  (* TODO FIX IMM *)
+  failwith "I32 concreteness"
+  (* match_limits lim1 lim2 *)
 
 let match_global_type gt1 gt2 =
   gt1 = gt2
@@ -86,10 +90,16 @@ let string_of_limits {min; max} =
   (match max with None -> "" | Some n -> " " ^ I32.to_string_u n)
 
 let string_of_memory_type = function
-  | MemoryType lim -> string_of_limits lim
+  | MemoryType lim ->
+    (* TODO FIX IMM *)
+    failwith "I32 concreteness"
+    (* string_of_limits lim *)
 
 let string_of_table_type = function
-  | TableType (lim, t) -> string_of_limits lim ^ " " ^ string_of_elem_type t
+  | TableType (lim, t) ->
+    (* TODO FIX IMM *)
+    failwith "I32 concreteness"
+    (* string_of_limits lim ^ " " ^ string_of_elem_type t *)
 
 let string_of_global_type = function
   | GlobalType (t, Immutable) -> string_of_value_type t

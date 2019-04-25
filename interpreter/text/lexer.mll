@@ -165,9 +165,9 @@ rule token = parse
     { let open Source in
       CONST (numop t
         (fun s -> let n = I32.of_string s.it in
-          i32_const (n @@ s.at), Values.I32 n)
+          i32_const ((I32.to_bits n) @@ s.at), Values.I32 n)
         (fun s -> let n = I64.of_string s.it in
-          i64_const (n @@ s.at), Values.I64 n)
+          i64_const ((I64.to_bits n) @@ s.at), Values.I64 n)
         (fun s -> let n = F32.of_string s.it in
           f32_const (n @@ s.at), Values.F32 n)
         (fun s -> let n = F64.of_string s.it in
@@ -339,6 +339,7 @@ rule token = parse
   | "script" { SCRIPT }
   | "register" { REGISTER }
   | "invoke" { INVOKE }
+  | "symbolic_invoke" { SYMBOLICINVOKE }
   | "get" { GET }
   | "assert_malformed" { ASSERT_MALFORMED }
   | "assert_invalid" { ASSERT_INVALID }

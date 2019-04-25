@@ -10,8 +10,8 @@ open Instance
 let global (GlobalType (t, _) as gt) =
   let v =
     match t with
-    | I32Type -> I32 666l
-    | I64Type -> I64 666L
+    | I32Type -> I32 (I32.of_bits 666l)
+    | I64Type -> I64 (I64.of_bits 666L)
     | F32Type -> F32 (F32.of_float 666.6)
     | F64Type -> F64 (F64.of_float 666.6)
   in Global.alloc gt v

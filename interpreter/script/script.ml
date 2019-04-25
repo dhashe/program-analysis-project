@@ -9,6 +9,7 @@ and definition' =
 type action = action' Source.phrase
 and action' =
   | Invoke of var option * Ast.name * Ast.literal list
+  | SymbolicInvoke of var option * Ast.name * Ast.literal list
   | Get of var option * Ast.name
 
 type assertion = assertion' Source.phrase

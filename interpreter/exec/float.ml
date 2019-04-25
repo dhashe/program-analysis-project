@@ -55,6 +55,8 @@ sig
   val gt : t -> t -> bool
   val ge : t -> t -> bool
   val zero : t
+
+  val is_concrete : t -> bool
 end
 
 module Make (Rep : RepType) : S with type bits = Rep.t =
@@ -240,4 +242,6 @@ struct
     else
       (* TODO: use sprintf "%h" once we have upgraded to OCaml 4.03 *)
       string_of_float (to_float (abs x))
+
+  let is_concrete x = true
 end

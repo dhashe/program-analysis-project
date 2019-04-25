@@ -130,7 +130,7 @@ let rec step (c : config) : config =
       | Loop (ts, es'), vs ->
         vs, [Label (0, [e' @@ e.at], ([], List.map plain es')) @@ e.at]
 
-      | If (ts, es1, es2), I32 0l :: vs' ->
+      | If (ts, es1, es2), I32 i :: vs' when i = I32.zero ->
         vs', [Plain (Block (ts, es2)) @@ e.at]
 
       | If (ts, es1, es2), I32 i :: vs' ->
@@ -139,17 +139,17 @@ let rec step (c : config) : config =
       | Br x, vs ->
         [], [Breaking (x.it, vs) @@ e.at]
 
-      | BrIf x, I32 0l :: vs' ->
+      | BrIf x, I32 i :: vs' when i = I32.zero ->
         vs', []
 
       | BrIf x, I32 i :: vs' ->
         vs', [Plain (Br x) @@ e.at]
 
-      | BrTable (xs, x), I32 i :: vs' when I32.ge_u i (Lib.List32.length xs) ->
+      | BrTable (xs, x), I32 i :: vs' when I32.ge_u i (I32.of_bits (Lib.List32.length xs)) ->
         vs', [Plain (Br x) @@ e.at]
 
       | BrTable (xs, x), I32 i :: vs' ->
-        vs', [Plain (Br (Lib.List32.nth xs i)) @@ e.at]
+        vs', [Plain (Br (Lib.List32.nth xs (I32.to_bits i))) @@ e.at]
 
       | Return, vs ->
         vs, [Returning vs @@ e.at]
@@ -158,7 +158,7 @@ let rec step (c : config) : config =
         vs, [Invoke (func frame.inst x) @@ e.at]
 
       | CallIndirect x, I32 i :: vs ->
-        let func = func_elem frame.inst (0l @@ e.at) i e.at in
+        let func = func_elem frame.inst (0l @@ e.at) (I32.to_bits i) e.at in
         if type_ frame.inst x <> Func.type_of func then
           vs, [Trapping "indirect call type mismatch" @@ e.at]
         else
@@ -167,7 +167,7 @@ let rec step (c : config) : config =
       | Drop, v :: vs' ->
         vs', []
 
-      | Select, I32 0l :: v2 :: v1 :: vs' ->
+      | Select, I32 i :: v2 :: v1 :: vs' when i = I32.zero ->
         v2 :: vs', []
 
       | Select, I32 i :: v2 :: v1 :: vs' ->
@@ -198,8 +198,8 @@ let rec step (c : config) : config =
         (try
           let v =
             match sz with
-            | None -> Memory.load_value mem addr offset ty
-            | Some (sz, ext) -> Memory.load_packed sz ext mem addr offset ty
+            | None -> Memory.load_value mem (I64.to_bits addr) offset ty
+            | Some (sz, ext) -> Memory.load_packed sz ext mem (I64.to_bits addr) offset ty
           in v :: vs', []
         with exn -> vs', [Trapping (memory_error e.at exn) @@ e.at])
 
@@ -208,23 +208,23 @@ let rec step (c : config) : config =
         let addr = I64_convert.extend_i32_u i in
         (try
           (match sz with
-          | None -> Memory.store_value mem addr offset v
-          | Some sz -> Memory.store_packed sz mem addr offset v
+          | None -> Memory.store_value mem (I64.to_bits addr) offset v
+          | Some sz -> Memory.store_packed sz mem (I64.to_bits addr) offset v
           );
           vs', []
         with exn -> vs', [Trapping (memory_error e.at exn) @@ e.at]);
 
       | MemorySize, vs ->
         let mem = memory frame.inst (0l @@ e.at) in
-        I32 (Memory.size mem) :: vs, []
+        I32 (I32.of_bits (Memory.size mem)) :: vs, []
 
       | MemoryGrow, I32 delta :: vs' ->
         let mem = memory frame.inst (0l @@ e.at) in
         let old_size = Memory.size mem in
         let result =
-          try Memory.grow mem delta; old_size
+          try Memory.grow mem (I32.to_bits delta); old_size
           with Memory.SizeOverflow | Memory.SizeLimit | Memory.OutOfMemory -> -1l
-        in I32 result :: vs', []
+        in I32 (I32.of_bits result) :: vs', []
 
       | Const v, vs ->
         v.it :: vs, []
@@ -333,6 +333,17 @@ let rec eval (c : config) : value stack =
 (* Functions & Constants *)
 
 let invoke (func : func_inst) (vs : value list) : value list =
+  (* TODO Validate that all elements of vs are concrete *)
+  let at = match func with Func.AstFunc (_,_, f) -> f.at | _ -> no_region in
+  let FuncType (ins, out) = Func.type_of func in
+  if List.map Values.type_of vs <> ins then
+    Crash.error at "wrong number or types of arguments";
+  let c = config empty_module_inst (List.rev vs) [Invoke func @@ at] in
+  try List.rev (eval c) with Stack_overflow ->
+    Exhaustion.error at "call stack exhausted"
+
+let symbolic_invoke (func : func_inst) (vs : value list) : value list =
+  (* NOTE Any and all elements of vs may be symbolic *)
   let at = match func with Func.AstFunc (_,_, f) -> f.at | _ -> no_region in
   let FuncType (ins, out) = Func.type_of func in
   if List.map Values.type_of vs <> ins then
@@ -391,23 +402,23 @@ let init_table (inst : module_inst) (seg : table_segment) =
   let {index; offset = const; init} = seg.it in
   let tab = table inst index in
   let offset = i32 (eval_const inst const) const.at in
-  let end_ = Int32.(add offset (of_int (List.length init))) in
+  let end_ = Int32.(add (I32.to_bits offset) (of_int (List.length init))) in
   let bound = Table.size tab in
-  if I32.lt_u bound end_ || I32.lt_u end_ offset then
+  if I32.lt_u (I32.of_bits bound) (I32.of_bits end_) || I32.lt_u (I32.of_bits end_) offset then
     Link.error seg.at "elements segment does not fit table";
   fun () ->
-    Table.blit tab offset (List.map (fun x -> FuncElem (func inst x)) init)
+    Table.blit tab (I32.to_bits offset) (List.map (fun x -> FuncElem (func inst x)) init)
 
 let init_memory (inst : module_inst) (seg : memory_segment) =
   let {index; offset = const; init} = seg.it in
   let mem = memory inst index in
   let offset' = i32 (eval_const inst const) const.at in
   let offset = I64_convert.extend_i32_u offset' in
-  let end_ = Int64.(add offset (of_int (String.length init))) in
+  let end_ = Int64.(add (I64.to_bits offset) (of_int (String.length init))) in
   let bound = Memory.bound mem in
-  if I64.lt_u bound end_ || I64.lt_u end_ offset then
+  if I64.lt_u (I64.of_bits bound) (I64.of_bits end_) || I64.lt_u (I64.of_bits end_) offset then
     Link.error seg.at "data segment does not fit memory";
-  fun () -> Memory.store_bytes mem offset init
+  fun () -> Memory.store_bytes mem (I64.to_bits offset) init
 
 
 let add_import (m : module_) (ext : extern) (im : import) (inst : module_inst)

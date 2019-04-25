@@ -1,6 +1,5 @@
 open Types
 
-
 (* Values and operators *)
 
 type ('i32, 'i64, 'f32, 'f64) op =
@@ -26,7 +25,7 @@ let default_value = function
 
 (* Conversion *)
 
-let value_of_bool b = I32 (if b then 1l else 0l)
+let value_of_bool b = I32 (if b then I32.one else I32.zero)
 
 let string_of_value = function
   | I32 i -> I32.to_string_s i
