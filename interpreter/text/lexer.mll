@@ -135,6 +135,7 @@ let float =
   | sign? "nan:" "0x" hexnum
 let string = '"' character* '"'
 let name = '$' (letter | digit | '_' | symbol)+
+let symvar = '%' (letter | digit | '_' | symbol)+
 let reserved = ([^'\"''('')'';'] # space)+  (* hack for table size *)
 
 let ixx = "i" ("32" | "64")
@@ -363,6 +364,7 @@ rule token = parse
   | "output" { OUTPUT }
 
   | name as s { VAR s }
+  | symvar as s { SYMVAR s }
 
   | ";;"utf8_no_nl*eof { EOF }
   | ";;"utf8_no_nl*'\n' { Lexing.new_line lexbuf; token lexbuf }

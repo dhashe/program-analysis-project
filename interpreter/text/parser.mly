@@ -166,6 +166,7 @@ let inline_type_explicit (c : context) x ft at =
 %token<string> FLOAT
 %token<string> STRING
 %token<string> VAR
+%token<string> SYMVAR
 %token<Types.value_type> VALUE_TYPE
 %token<string Source.phrase -> Ast.instr' * Values.value> CONST
 %token<string Source.phrase -> Values.value> SYM
@@ -823,7 +824,7 @@ meta :
 
 const :
   | LPAR CONST literal RPAR { snd (literal $2 $3) @@ ati 3 }
-  | LPAR SYM VAR RPAR { $2 ($3 @@ at ()) @@ ati 3 }
+  | LPAR SYM SYMVAR RPAR { ($2 ($3 @@ at ())) @@ at () }
 
 const_list :
   | /* empty */ { [] }
