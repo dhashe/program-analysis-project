@@ -150,7 +150,7 @@ let inline_type_explicit (c : context) x ft at =
 %token CALL CALL_INDIRECT RETURN
 %token LOCAL_GET LOCAL_SET LOCAL_TEE GLOBAL_GET GLOBAL_SET
 %token LOAD STORE OFFSET_EQ_NAT ALIGN_EQ_NAT
-%token CONST UNARY BINARY TEST COMPARE CONVERT
+%token CONST SYM UNARY BINARY TEST COMPARE CONVERT
 %token UNREACHABLE MEMORY_SIZE MEMORY_GROW
 %token FUNC START TYPE PARAM RESULT LOCAL GLOBAL
 %token TABLE ELEM MEMORY DATA OFFSET IMPORT EXPORT TABLE
@@ -168,6 +168,7 @@ let inline_type_explicit (c : context) x ft at =
 %token<string> VAR
 %token<Types.value_type> VALUE_TYPE
 %token<string Source.phrase -> Ast.instr' * Values.value> CONST
+%token<string Source.phrase -> Values.value> SYM
 %token<Ast.instr'> UNARY
 %token<Ast.instr'> BINARY
 %token<Ast.instr'> TEST
@@ -822,6 +823,7 @@ meta :
 
 const :
   | LPAR CONST literal RPAR { snd (literal $2 $3) @@ ati 3 }
+  | LPAR SYM VAR RPAR { $2 ($3 @@ at ()) @@ ati 3 }
 
 const_list :
   | /* empty */ { [] }

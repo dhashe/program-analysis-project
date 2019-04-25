@@ -173,6 +173,16 @@ rule token = parse
         (fun s -> let n = F64.of_string s.it in
           f64_const (n @@ s.at), Values.F64 n))
     }
+  | (ixx as t)".sym"
+    { let open Source in
+      SYM (intop t
+               (fun s -> let x = Concreteness.Symbolic
+                             (Z3.BitVector.mk_const Concreteness.ctx
+                                (Z3.Symbol.mk_string Concreteness.ctx s.it) 32) in Values.I32 x)
+               (fun s -> let x = Concreteness.Symbolic
+                             (Z3.BitVector.mk_const Concreteness.ctx
+                                (Z3.Symbol.mk_string Concreteness.ctx s.it) 64) in Values.I64 x))
+    }
   | "funcref" { FUNCREF }
   | "mut" { MUT }
 

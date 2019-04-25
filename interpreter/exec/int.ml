@@ -123,9 +123,9 @@ struct
   let one = C.Concrete Rep.one
   let ten = C.Concrete (Rep.of_int 10)
 
-  let check_binop_concrete binop x y = match (x,y) with
-      (C.Concrete x', C.Concrete y') -> C.Concrete (binop x' y')
-    | _ -> failwith "TODO"
+  (* let check_binop_concrete binop x y = match (x,y) with
+   *     (C.Concrete x', C.Concrete y') -> C.Concrete (binop x' y')
+   *   | _ -> failwith "TODO" *)
   let check_unop_concrete unop x = match x with
       C.Concrete x' -> C.Concrete (unop x')
     | _ -> failwith "TODO"
@@ -133,9 +133,9 @@ struct
   let check_relop_concrete relop x y = match (x,y) with
       (C.Concrete x', C.Concrete y') -> relop x' y'
     | _ -> failwith "TODO"
-  let check_unrelop_concrete unop x = match x with
-      C.Concrete x' -> unop x'
-    | _ -> failwith "TODO"
+  (* let check_unrelop_concrete unop x = match x with
+   *     C.Concrete x' -> unop x'
+   *   | _ -> failwith "TODO" *)
 
   let to_bv_const x = (Z3.BitVector.mk_numeral C.ctx (Rep.to_string x) Rep.bitwidth)
 
