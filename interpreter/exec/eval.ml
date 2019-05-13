@@ -17,6 +17,18 @@ exception Trap = Trap.Error
 exception Crash = Crash.Error (* failure that cannot happen in valid code *)
 exception Exhaustion = Exhaustion.Error
 
+(* this path leads to an error, report the location and a satisfying set of inputs *)
+(* module SymError =
+ * struct
+ *   exception Error of Source.region * string * Z3.Expr.expr
+ * 
+ *   (\* TODO Use and uncomment *\)
+ *   (\* let error at m pc = raise (Error (at, m, pc)) *\)
+ * end *)
+(* exception Sym_error = SymError.Error *)
+
+exception Sym_no_error (* this path does not lead to an error, try another *)
+
 let memory_error at = function
   | Memory.Bounds -> "out of bounds memory access"
   | Memory.SizeOverflow -> "memory size overflow"
@@ -330,11 +342,29 @@ let rec eval (c : config) : value stack =
     eval (step c)
 
 
+let rec sym_eval (c : config) : value stack =
+  (* TODO Symbolic evaluation systematically tries paths through DFS
+     until it finds an error or runs out of reasonable paths. *)
+  match c.code with
+  | vs, [] ->
+    raise Sym_no_error
+
+  | vs, {it = Trapping msg; at} :: _ ->
+    Trap.error at msg
+
+  | vs, es ->
+    sym_eval (step c)
+
+
 (* Functions & Constants *)
 
 let invoke (func : func_inst) (vs : value list) : value list =
-  (* TODO Validate that all elements of vs are concrete *)
+  (* NOTE Validate that all elements of vs are concrete *)
   let at = match func with Func.AstFunc (_,_, f) -> f.at | _ -> no_region in
+  if List.exists (function (I32 Concreteness.Symbolic _) -> true
+                         | (I64 Concreteness.Symbolic _) -> true
+                         | _ -> false) vs
+  then Crash.error at "Symbolic values passed to invoke" else
   let FuncType (ins, out) = Func.type_of func in
   if List.map Values.type_of vs <> ins then
     Crash.error at "wrong number or types of arguments";
@@ -349,8 +379,11 @@ let symbolic_invoke (func : func_inst) (vs : value list) : value list =
   if List.map Values.type_of vs <> ins then
     Crash.error at "wrong number or types of arguments";
   let c = config empty_module_inst (List.rev vs) [Invoke func @@ at] in
-  try List.rev (eval c) with Stack_overflow ->
-    Exhaustion.error at "call stack exhausted"
+  (* Have to reset the solver from last time *)
+  let () = Z3.Solver.reset Concreteness.solver in
+  try List.rev (sym_eval c) with
+    Stack_overflow -> Exhaustion.error at "call stack exhausted"
+  | Sym_no_error -> [] (* No error, so just return [] *)
 
 let eval_const (inst : module_inst) (const : const) : value =
   let c = config inst [] (List.map plain const.it) in
