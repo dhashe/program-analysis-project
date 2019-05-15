@@ -14,3 +14,7 @@ let try_constraints constraints =
   let _ = Z3.Solver.check solver [] in
   let model = Z3.Solver.get_model solver in
   model
+
+let fp_round = Z3.FloatingPoint.RoundingMode.mk_rne ctx
+let fp_sort32 = Z3.FloatingPoint.mk_sort_32 ctx
+let fp_sort64 = Z3.FloatingPoint.mk_sort_64 ctx

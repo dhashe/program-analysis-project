@@ -118,7 +118,7 @@ struct
 
   let of_bits x = C.Concrete x
   let to_bits = function C.Concrete x -> x
-                       | C.Symbolic x -> (
+                       | C.Symbolic x -> failwith "Int symbolic" (* (
                            (* TODO Figure out a better way to do this *)
                            (* TODO Conclusion was just to not do it. We picked a different strategy for implementing memory. *)
                            let () = Z3.Solver.add C.solver [Z3.Boolean.mk_not C.ctx (Z3.Boolean.mk_eq C.ctx x (Z3.BitVector.mk_numeral C.ctx "-7" (Rep.bitwidth)))] in
@@ -140,7 +140,7 @@ struct
                                    )
                                )
                            )
-                         )
+                         ) *)
 
   let zero = C.Concrete Rep.zero
   let one = C.Concrete Rep.one

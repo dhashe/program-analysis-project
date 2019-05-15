@@ -310,12 +310,12 @@ and check_block (c : context) (es : instr list) (ts : stack_type) at =
 (* Types *)
 
 let check_limits {min; max} range at msg =
-  require (I64.le_u (I64.of_bits (Int64.of_int32 min)) range) at msg;
+  require (Concreteness.was_concrete (I64.le_u (I64.of_bits (Int64.of_int32 min)) range)) at msg;
   match max with
   | None -> ()
   | Some max ->
-    require (I64.le_u (I64.of_bits (Int64.of_int32 max)) range) at msg;
-    require (I32.le_u (I32.of_bits min) (I32.of_bits max)) at
+    require (Concreteness.was_concrete (I64.le_u (I64.of_bits (Int64.of_int32 max)) range)) at msg;
+    require (Concreteness.was_concrete (I32.le_u (I32.of_bits min) (I32.of_bits max))) at
       "size minimum must not be greater than maximum"
 
 let check_value_type (t : value_type) at =

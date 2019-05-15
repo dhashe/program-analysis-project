@@ -204,7 +204,7 @@ let rec step (c : config) : config =
           )
 
        (* TODO Branching *)
-      | BrTable (xs, x), I32 i :: vs' when I32.ge_u i (I32.of_bits (Lib.List32.length xs)) ->
+      | BrTable (xs, x), I32 i :: vs' when Concreteness.was_concrete (I32.ge_u i (I32.of_bits (Lib.List32.length xs))) ->
         vs', [Plain (Br x) @@ e.at]
 
       | BrTable (xs, x), I32 i :: vs' ->
@@ -292,11 +292,11 @@ let rec step (c : config) : config =
         v.it :: vs, []
 
       | Test testop, v :: vs' ->
-        (try value_of_bool (Eval_numeric.eval_testop testop v) :: vs', []
+        (try value_of_bool_concreteness (Eval_numeric.eval_testop testop v) :: vs', []
         with exn -> vs', [Trapping (numeric_error e.at exn) @@ e.at])
 
       | Compare relop, v2 :: v1 :: vs' ->
-        (try value_of_bool (Eval_numeric.eval_relop relop v1 v2) :: vs', []
+        (try value_of_bool_concreteness (Eval_numeric.eval_relop relop v1 v2) :: vs', []
         with exn -> vs', [Trapping (numeric_error e.at exn) @@ e.at])
 
       | Unary unop, v :: vs' ->
@@ -489,7 +489,8 @@ let init_table (inst : module_inst) (seg : table_segment) =
   let offset = i32 (eval_const inst const) const.at in
   let end_ = Int32.(add (I32.to_bits offset) (of_int (List.length init))) in
   let bound = Table.size tab in
-  if I32.lt_u (I32.of_bits bound) (I32.of_bits end_) || I32.lt_u (I32.of_bits end_) offset then
+  if Concreteness.was_concrete (I32.lt_u (I32.of_bits bound) (I32.of_bits end_))
+  || Concreteness.was_concrete (I32.lt_u (I32.of_bits end_) offset) then
     Link.error seg.at "elements segment does not fit table";
   fun () ->
     Table.blit tab (I32.to_bits offset) (List.map (fun x -> FuncElem (func inst x)) init)
@@ -501,7 +502,8 @@ let init_memory (inst : module_inst) (seg : memory_segment) =
   let offset = I64_convert.extend_i32_u offset' in
   let end_ = Int64.(add (I64.to_bits offset) (of_int (String.length init))) in
   let bound = Memory.bound mem in
-  if I64.lt_u (I64.of_bits bound) (I64.of_bits end_) || I64.lt_u (I64.of_bits end_) offset then
+  if Concreteness.was_concrete (I64.lt_u (I64.of_bits bound) (I64.of_bits end_))
+  || Concreteness.was_concrete (I64.lt_u (I64.of_bits end_) offset) then
     Link.error seg.at "data segment does not fit memory";
   fun () -> Memory.store_bytes mem (I64.to_bits offset) init
 

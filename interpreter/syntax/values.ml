@@ -27,6 +27,13 @@ let default_value = function
 
 let value_of_bool b = I32 (if b then I32.one else I32.zero)
 
+let value_of_bool_concreteness b = match b with
+    Concreteness.Concrete b -> value_of_bool b
+  | Concreteness.Symbolic b ->
+    I32 Concreteness.(Symbolic (Z3.Boolean.mk_ite ctx b
+                                  (Z3.BitVector.mk_numeral Concreteness.ctx "1" 32)
+                                  (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)))
+
 let string_of_value = function
   | I32 i -> I32.to_string_s i
   | I64 i -> I64.to_string_s i

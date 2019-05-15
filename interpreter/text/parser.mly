@@ -117,7 +117,7 @@ let bind_label (c : context) x =
 let anon category space n =
   let i = space.count in
   space.count <- Int32.add space.count n;
-  if I32.lt_u (I32.of_bits space.count) (I32.of_bits n) then
+  if Concreteness.was_concrete (I32.lt_u (I32.of_bits space.count) (I32.of_bits n)) then
     error no_region ("too many " ^ category ^ " bindings");
   i
 

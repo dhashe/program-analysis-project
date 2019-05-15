@@ -105,7 +105,7 @@ let f64 s = F64.of_bits (u64 s)
 let len32 s =
   let pos = pos s in
   let n = vu32 s in
-  if I32.le_u (I32.of_bits n) (I32.of_bits (Int32.of_int (len s))) then Int32.to_int n else
+  if Concreteness.was_concrete (I32.le_u (I32.of_bits n) (I32.of_bits (Int32.of_int (len s)))) then Int32.to_int n else
     error s pos "length out of bounds"
 
 let bool s = (vu1 s = 1)
@@ -196,7 +196,7 @@ let end_ s = expect 0x0b s "END opcode expected"
 
 let memop s =
   let align = vu32 s in
-  require (I32.le_u (I32.of_bits align) (I32.of_bits 32l)) s (pos s - 1) "invalid memop flags";
+  require (Concreteness.was_concrete (I32.le_u (I32.of_bits align) (I32.of_bits 32l))) s (pos s - 1) "invalid memop flags";
   let offset = vu32 s in
   Int32.to_int align, offset
 
@@ -580,7 +580,7 @@ let code _ s =
   let pos = pos s in
   let nts = vec local s in
   let ns = List.map (fun (n, _) -> I64_convert.extend_i32_u (I32.of_bits n)) nts in
-  require (I64.lt_u (List.fold_left I64.add I64.zero ns) (I64.of_bits 0x1_0000_0000L))
+  require (Concreteness.was_concrete (I64.lt_u (List.fold_left I64.add I64.zero ns) (I64.of_bits 0x1_0000_0000L)))
     s pos "too many locals";
   let locals = List.flatten (List.map (Lib.Fun.uncurry Lib.List32.make) nts) in
   let body = instr_block s in

@@ -59,7 +59,7 @@ sig
   val is_concrete : t -> bool
 end
 
-module Make (Rep : RepType) : S with type bits = Rep.t =
+module Make (Rep : RepType) : S with type bits = Rep.t and type t = Rep.t Concreteness.concreteness =
 struct
   module C = Concreteness
 
@@ -123,10 +123,10 @@ struct
     canonicalize_nan nan
 
   let fp_sort = if (Rep.to_hex_string Rep.bare_nan) = "0x7f800000l"
-    then (Z3.FloatingPoint.mk_sort_32 C.ctx)
-    else (Z3.FloatingPoint.mk_sort_64 C.ctx)
+    then C.fp_sort32
+    else C.fp_sort64
 
-  let fp_round = Z3.FloatingPoint.RoundingMode.mk_rne C.ctx
+  let fp_round = C.fp_round
 
   let to_fp_const x = (Z3.FloatingPoint.mk_numeral_s C.ctx (Rep.to_string x) fp_sort)
   let cased_binop concrete_func symbolic_func x y =
@@ -162,8 +162,8 @@ struct
 
   let add x y = cased_binop add' add'' x y
   let sub x y = cased_binop sub' sub'' x y
-  let mul x y = cased_binop sub' sub'' x y
-  let div x y = cased_binop sub' sub'' x y
+  let mul x y = cased_binop mul' mul'' x y
+  let div x y = cased_binop div' div'' x y
 
   let sqrt' x =  unary Pervasives.sqrt  x
   let ceil'  x = unary Pervasives.ceil  x
