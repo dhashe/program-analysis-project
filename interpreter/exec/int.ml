@@ -64,17 +64,17 @@ sig
   val clz : t -> t
   val ctz : t -> t
   val popcnt : t -> t
-  val eqz : t -> bool
-  val eq : t -> t -> bool
-  val ne : t -> t -> bool
-  val lt_s : t -> t -> bool
-  val lt_u : t -> t -> bool
-  val le_s : t -> t -> bool
-  val le_u : t -> t -> bool
-  val gt_s : t -> t -> bool
-  val gt_u : t -> t -> bool
-  val ge_s : t -> t -> bool
-  val ge_u : t -> t -> bool
+  val eqz : t -> bool Concreteness.concreteness
+  val eq : t -> t -> bool Concreteness.concreteness
+  val ne : t -> t -> bool Concreteness.concreteness
+  val lt_s : t -> t -> bool Concreteness.concreteness
+  val lt_u : t -> t -> bool Concreteness.concreteness
+  val le_s : t -> t -> bool Concreteness.concreteness
+  val le_u : t -> t -> bool Concreteness.concreteness
+  val gt_s : t -> t -> bool Concreteness.concreteness
+  val gt_u : t -> t -> bool Concreteness.concreteness
+  val ge_s : t -> t -> bool Concreteness.concreteness
+  val ge_u : t -> t -> bool Concreteness.concreteness
 
   val of_int_s : int -> t
   val of_int_u : int -> t
@@ -117,7 +117,30 @@ struct
   type bits = Rep.t
 
   let of_bits x = C.Concrete x
-  let to_bits = function C.Concrete x -> x | C.Symbolic x -> failwith "Symbolic"
+  let to_bits = function C.Concrete x -> x
+                       | C.Symbolic x -> (
+                           (* TODO Figure out a better way to do this *)
+                           (* TODO Conclusion was just to not do it. We picked a different strategy for implementing memory. *)
+                           let () = Z3.Solver.add C.solver [Z3.Boolean.mk_not C.ctx (Z3.Boolean.mk_eq C.ctx x (Z3.BitVector.mk_numeral C.ctx "-7" (Rep.bitwidth)))] in
+                           let _ = Z3.Solver.check C.solver [] in
+                           (
+                             match Z3.Solver.get_model C.solver with
+                               None -> failwith "binding"
+                             | Some mdl -> (
+                                 match Z3.Model.eval mdl x false with
+                                 None -> failwith "binding"
+                                 | Some e -> (
+                                     let () = Z3.Solver.add C.solver [Z3.Boolean.mk_eq C.ctx x e] in
+                                     (* let () = print_string ((Z3.Solver.to_string C.solver) ^ "\n") in
+                                      * let () = print_string ((Z3.Model.to_string mdl) ^ "\n") in
+                                      * let () = print_string ((Z3.Expr.to_string x) ^ "\n") in
+                                      * let () = print_string ((Z3.Expr.to_string e) ^ "\n") in *)
+                                     (* failwith "Symbolic" *)
+                                     Rep.of_int (Z3.BitVector.get_int e)
+                                   )
+                               )
+                           )
+                         )
 
   let zero = C.Concrete Rep.zero
   let one = C.Concrete Rep.one
@@ -130,12 +153,12 @@ struct
       C.Concrete x' -> C.Concrete (unop x')
     | _ -> failwith "TODO"
 
-  let check_relop_concrete relop x y = match (x,y) with
-      (C.Concrete x', C.Concrete y') -> relop x' y'
-    | _ -> failwith "TODO"
-  (* let check_unrelop_concrete unop x = match x with
-   *     C.Concrete x' -> unop x'
-   *   | _ -> failwith "TODO" *)
+  (* let check_relop_concrete relop x y = match (x,y) with
+   *     (C.Concrete x', C.Concrete y') -> relop x' y'
+   *   | _ -> failwith "TODO"
+   * (\* let check_unrelop_concrete unop x = match x with
+   *  *     C.Concrete x' -> unop x'
+   *  *   | _ -> failwith "TODO" *\) *)
 
   let to_bv_const x = (Z3.BitVector.mk_numeral C.ctx (Rep.to_string x) Rep.bitwidth)
 
@@ -270,10 +293,10 @@ struct
   (* TODO This is weird in z3, implement later *)
   let popcnt = check_unop_concrete popcnt'
 
-  (* TODO Need to thread through bool concreteness for these to work *)
+  (* DONE Need to thread through bool concreteness for these to work *)
   let eqz' x = x = Rep.zero
-  let eqz = function C.Concrete x -> eqz' x
-                   | C.Symbolic _ -> failwith "TODO"
+  let eqz = function C.Concrete x -> C.Concrete (eqz' x)
+                   | C.Symbolic x -> C.Symbolic (Z3.Boolean.mk_eq C.ctx x (Z3.BitVector.mk_numeral C.ctx "0" (Rep.bitwidth)))
 
   let eq' x y = x = y
   let ne' x y = x <> y
@@ -286,16 +309,27 @@ struct
   let ge_s' x y = x >= y
   let ge_u' x y = cmp_u x (>=) y
 
-  let eq = check_relop_concrete eq'
-  let ne = check_relop_concrete ne'
-  let lt_s = check_relop_concrete lt_s'
-  let lt_u = check_relop_concrete lt_u'
-  let le_s = check_relop_concrete le_s'
-  let le_u = check_relop_concrete le_u'
-  let gt_s = check_relop_concrete gt_s'
-  let gt_u = check_relop_concrete gt_u'
-  let ge_s = check_relop_concrete ge_s'
-  let ge_u = check_relop_concrete ge_u'
+  let eq'' x y = Z3.Boolean.mk_eq C.ctx x y
+  let ne'' x y = Z3.Boolean.mk_not C.ctx (Z3.Boolean.mk_eq C.ctx x y)
+  let lt_s'' x y = Z3.BitVector.mk_slt C.ctx x y
+  let lt_u'' x y = Z3.BitVector.mk_ult C.ctx x y
+  let le_s'' x y = Z3.BitVector.mk_sle C.ctx x y
+  let le_u'' x y = Z3.BitVector.mk_ule C.ctx x y
+  let gt_s'' x y = Z3.BitVector.mk_sgt C.ctx x y
+  let gt_u'' x y = Z3.BitVector.mk_ugt C.ctx x y
+  let ge_s'' x y = Z3.BitVector.mk_sge C.ctx x y
+  let ge_u'' x y = Z3.BitVector.mk_uge C.ctx x y
+
+  let eq = cased_binop eq' eq''
+  let ne = cased_binop ne' ne''
+  let lt_s = cased_binop lt_s' lt_s''
+  let lt_u = cased_binop lt_u' lt_u''
+  let le_s = cased_binop le_s' le_s''
+  let le_u = cased_binop le_u' le_u''
+  let gt_s = cased_binop gt_s' gt_s''
+  let gt_u = cased_binop gt_u' gt_u''
+  let ge_s = cased_binop ge_s' ge_s''
+  let ge_u = cased_binop ge_u' ge_u''
 
   let of_int_s i = C.Concrete (Rep.of_int i)
   let of_int_u i = and_ (C.Concrete (Rep.of_int i)) (or_ (shl (C.Concrete (Rep.of_int max_int)) one) one)
@@ -307,7 +341,7 @@ struct
     else
       Rep.to_string (match (div_u (C.Concrete i) ten) with C.Concrete x -> x | _ -> failwith "RIP") ^ to_string_s (rem_u (C.Concrete i) ten)
   let to_string_u = function C.Concrete x -> to_string_u' x
-                   | C.Symbolic _ -> failwith "TODO"
+                   | C.Symbolic _ -> failwith "TODO Actually"
 
   (* String conversion that allows leading signs and unsigned values *)
 
@@ -332,14 +366,15 @@ struct
       if i = len then num else
       if s.[i] = '_' then parse_hex (i + 1) num else
       let digit = of_int (hex_digit s.[i]) in
-      require (le_u num (shr_u (C.Concrete minus_one) (C.Concrete (of_int 4))));
+      require (C.was_concrete (le_u num (shr_u (C.Concrete minus_one) (C.Concrete (of_int 4)))));
       parse_hex (i + 1) (C.Concrete (logor (shift_left (to_bits num) 4) digit))
     in
     let rec parse_dec i num =
       if i = len then num else
       if s.[i] = '_' then parse_dec (i + 1) num else
       let digit = of_int (dec_digit s.[i]) in
-      require (lt_u num (C.Concrete max_upper) || num = (C.Concrete max_upper) && le_u (C.Concrete digit) (C.Concrete max_lower));
+      require ((C.was_concrete (lt_u num (C.Concrete max_upper)))
+               || num = (C.Concrete max_upper) && (C.was_concrete (le_u (C.Concrete digit) (C.Concrete max_lower))));
       parse_dec (i + 1) (C.Concrete (add (mul (to_bits num) (to_bits ten)) digit))
     in
     let parse_int i =
@@ -353,13 +388,13 @@ struct
     | '+' -> parse_int 1
     | '-' ->
       let n = parse_int 1 in
-      require (ge_s (C.Concrete (sub (to_bits n) one)) (C.Concrete minus_one));
+      require (C.was_concrete (ge_s (C.Concrete (sub (to_bits n) one)) (C.Concrete minus_one)));
       (check_unop_concrete Rep.neg) n
     | _ -> parse_int 0
 
   let of_string_s s =
     let n = of_string s in
-    require (s.[0] = '-' || ge_s n (C.Concrete Rep.zero));
+    require (s.[0] = '-' || C.was_concrete (ge_s n (C.Concrete Rep.zero)));
     n
 
   let of_string_u s =

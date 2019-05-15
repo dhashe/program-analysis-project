@@ -1,5 +1,9 @@
 type 'xXX concreteness = Concrete of 'xXX | Symbolic of Z3.Expr.expr
 
+let was_concrete x = match x with
+    Concrete y -> y
+  | Symbolic _ -> failwith "Was not concrete"
+
 let ctx = Z3.mk_context []
 
 let solver = Z3.Solver.mk_solver ctx None

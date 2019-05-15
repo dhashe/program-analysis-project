@@ -17,7 +17,7 @@ exception SizeLimit
 
 let within_limits size = function
   | None -> true
-  | Some max -> I32.le_u size max
+  | Some max -> Concreteness.was_concrete (I32.le_u size max)
 
 let create size =
   try Lib.Array32.make size Uninitialized
@@ -38,7 +38,7 @@ let type_of tab =
 let grow tab delta =
   let old_size = size tab in
   let new_size = Int32.add old_size delta in
-  if I32.gt_u (I32.of_bits old_size) (I32.of_bits new_size) then raise SizeOverflow else
+  if Concreteness.was_concrete (I32.gt_u (I32.of_bits old_size) (I32.of_bits new_size)) then raise SizeOverflow else
   if not (within_limits (I32.of_bits new_size) (match tab.max with None -> None | Some v -> Some (I32.of_bits v))) then raise SizeLimit else
   let after = create new_size in
   Array.blit tab.content 0 after 0 (Array.length tab.content);

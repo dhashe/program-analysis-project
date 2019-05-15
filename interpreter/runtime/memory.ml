@@ -10,8 +10,15 @@ type offset = int32
 type pack_size = Pack8 | Pack16 | Pack32
 type extension = SX | ZX
 
+(* TODO Use Z3 array logic to implement the array. *)
+(* Start with a fully concrete BigArray, but keep track of the written bytes *)
+(* When we receive a symbolic expression, then create the parallel Z3 array and initialize it with the written bytes *)
+
 type memory' = (int, int8_unsigned_elt, c_layout) Array1.t
-type memory = {mutable content : memory'; max : size option}
+type memory = {mutable content : memory'; max : size option;
+               (* TODO Not really sure about the types below. Why are addresses here 64 bit? *)
+               (* Conceptually: (address, size, content) list option *)
+               mutable symbolic_log : (address * size) list option}
 type t = memory
 
 exception Type
@@ -29,10 +36,10 @@ let packed_size = function
 
 let within_limits n = function
   | None -> true
-  | Some max -> I32.le_u n max
+  | Some max -> Concreteness.was_concrete (I32.le_u n max)
 
 let create n =
-  if I32.gt_u n (I32.of_bits 0x10000l) then raise SizeOverflow else
+  if Concreteness.was_concrete (I32.gt_u n (I32.of_bits 0x10000l)) then raise SizeOverflow else
   try
     let size = Int64.(mul (of_int32 (I32.to_bits n)) page_size) in
     let mem = Array1_64.create Int8_unsigned C_layout size in
@@ -44,7 +51,7 @@ let alloc (MemoryType {min; max}) =
   let mint = I32.of_bits min in
   let maxt = match max with None -> None | Some v -> Some (I32.of_bits v) in
   assert (within_limits mint maxt);
-  {content = create mint; max}
+  {content = create mint; max; symbolic_log = None}
 
 let bound mem =
   Array1_64.dim mem.content
@@ -58,7 +65,7 @@ let type_of mem =
 let grow mem delta =
   let old_size = size mem in
   let new_size = Int32.add old_size delta in
-  if I32.gt_u (I32.of_bits old_size) (I32.of_bits new_size) then raise SizeOverflow else
+  if Concreteness.was_concrete (I32.gt_u (I32.of_bits old_size) (I32.of_bits new_size)) then raise SizeOverflow else
   if not (within_limits (I32.of_bits new_size) (match mem.max with None -> None | Some v -> Some (I32.of_bits v))) then raise SizeLimit else
   let after = create (I32.of_bits new_size) in
   let dim = Array1_64.dim mem.content in
@@ -66,10 +73,14 @@ let grow mem delta =
   mem.content <- after
 
 let load_byte mem a =
-  try Array1_64.get mem.content a with Invalid_argument _ -> raise Bounds
+  match mem.symbolic_log with
+  | Some sym_log -> failwith "TODO Implement sym_log"
+  | None -> (try Array1_64.get mem.content a with Invalid_argument _ -> raise Bounds)
 
 let store_byte mem a b =
-  try Array1_64.set mem.content a b with Invalid_argument _ -> raise Bounds
+  match mem.symbolic_log with
+  | Some sym_log -> failwith "TODO Implement sym_log"
+  | None -> (try Array1_64.set mem.content a b with Invalid_argument _ -> raise Bounds)
 
 let load_bytes mem a n =
   let buf = Buffer.create n in
@@ -85,7 +96,7 @@ let store_bytes mem a bs =
 
 let effective_address a o =
   let ea = Int64.(add a (of_int32 o)) in
-  if I64.lt_u (I64.of_bits ea) (I64.of_bits a) then raise Bounds;
+  if Concreteness.was_concrete (I64.lt_u (I64.of_bits ea) (I64.of_bits a)) then raise Bounds;
   ea
 
 let loadn mem a o n =

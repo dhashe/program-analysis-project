@@ -27,11 +27,11 @@ let size = function
 (* Subtyping *)
 
 let match_limits lim1 lim2 =
-  I32.ge_u lim1.min lim2.min &&
+  Concreteness.was_concrete (I32.ge_u lim1.min lim2.min) &&
   match lim1.max, lim2.max with
   | _, None -> true
   | None, Some _ -> false
-  | Some i, Some j -> I32.le_u i j
+  | Some i, Some j -> Concreteness.was_concrete (I32.le_u i j)
 
 let match_func_type ft1 ft2 =
   ft1 = ft2

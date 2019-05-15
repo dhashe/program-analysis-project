@@ -139,36 +139,86 @@ let rec step (c : config) : config =
       | Block (ts, es'), vs ->
         vs, [Label (List.length ts, [], ([], List.map plain es')) @@ e.at]
 
+      (* TODO: Branching, but with somewhat complicated semantics *)
       | Loop (ts, es'), vs ->
         vs, [Label (0, [e' @@ e.at], ([], List.map plain es')) @@ e.at]
 
       | If (ts, es1, es2), I32 i :: vs' when i = I32.zero ->
         vs', [Plain (Block (ts, es2)) @@ e.at]
 
-      | If (ts, es1, es2), I32 i :: vs' ->
+      | If (ts, es1, es2), I32 (Concreteness.Concrete i) :: vs' ->
         vs', [Plain (Block (ts, es1)) @@ e.at]
 
+       (* DONE: If then else *)
+      | If (ts, es1, es2), I32 (Concreteness.Symbolic i) :: vs' -> (
+            match Concreteness.try_constraints
+                    [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)] with
+              Some mdl -> (try (
+                let () = Z3.Solver.push Concreteness.solver in
+                let () = Z3.Solver.add Concreteness.solver
+                    [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)] in
+                vs', [Plain (Block (ts, es2)) @@ e.at]
+              ) with Sym_no_error -> (
+                let () = Z3.Solver.pop Concreteness.solver 1 in
+                let () = Z3.Solver.add Concreteness.solver
+                    [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))] in
+                vs', [Plain (Block (ts, es1)) @@ e.at]
+              ))
+            | None -> (
+                let () = Z3.Solver.add Concreteness.solver
+                    [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))] in
+                vs', [Plain (Block (ts, es1)) @@ e.at]
+              )
+          )
+
+       (* Unconditional branch *)
       | Br x, vs ->
         [], [Breaking (x.it, vs) @@ e.at]
 
       | BrIf x, I32 i :: vs' when i = I32.zero ->
         vs', []
 
-      | BrIf x, I32 i :: vs' ->
+      | BrIf x, I32 (Concreteness.Concrete i) :: vs' ->
         vs', [Plain (Br x) @@ e.at]
 
+      (* DONE: Conditional *)
+      | BrIf x, I32 (Concreteness.Symbolic i) :: vs' -> (
+            match Concreteness.try_constraints
+                    [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)] with
+              Some mdl -> (try (
+                let () = Z3.Solver.push Concreteness.solver in
+                let () = Z3.Solver.add Concreteness.solver
+                    [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)] in
+                vs', [Plain (Br x) @@ e.at]
+              ) with Sym_no_error -> (
+                let () = Z3.Solver.pop Concreteness.solver 1 in
+                let () = Z3.Solver.add Concreteness.solver
+                    [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))] in
+                vs', [Plain (Br x) @@ e.at]
+              ))
+            | None -> (
+                let () = Z3.Solver.add Concreteness.solver
+                    [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))] in
+                vs', [Plain (Br x) @@ e.at]
+              )
+          )
+
+       (* TODO Branching *)
       | BrTable (xs, x), I32 i :: vs' when I32.ge_u i (I32.of_bits (Lib.List32.length xs)) ->
         vs', [Plain (Br x) @@ e.at]
 
       | BrTable (xs, x), I32 i :: vs' ->
         vs', [Plain (Br (Lib.List32.nth xs (I32.to_bits i))) @@ e.at]
 
+       (* Unconditional branch *)
       | Return, vs ->
         vs, [Returning vs @@ e.at]
 
+       (* TODO Branching *)
       | Call x, vs ->
         vs, [Invoke (func frame.inst x) @@ e.at]
 
+       (* TODO Branching *)
       | CallIndirect x, I32 i :: vs ->
         let func = func_elem frame.inst (0l @@ e.at) (I32.to_bits i) e.at in
         if type_ frame.inst x <> Func.type_of func then
@@ -312,6 +362,7 @@ let rec step (c : config) : config =
     | Invoke func, vs when c.budget = 0 ->
       Exhaustion.error e.at "call stack exhausted"
 
+       (* TODO Branching *)
     | Invoke func, vs ->
       let FuncType (ins, out) = Func.type_of func in
       let n = List.length ins in
@@ -343,8 +394,9 @@ let rec eval (c : config) : value stack =
 
 
 let rec sym_eval (c : config) : value stack =
-  (* TODO Symbolic evaluation systematically tries paths through DFS
-     until it finds an error or runs out of reasonable paths. *)
+  (* TODO Symbolic evaluation systematically tries paths through
+     an Exception Passing Style Depth First Search until it finds
+     an error or runs out of reasonable paths. *)
   match c.code with
   | vs, [] ->
     raise Sym_no_error
