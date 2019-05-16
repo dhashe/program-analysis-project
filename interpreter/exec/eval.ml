@@ -159,6 +159,7 @@ let rec step (path_idx : int option) (solver : Z3.Solver.solver option) (c : con
 
        (* DONE: If then else *)
       | If (ts, es1, es2), I32 (Concreteness.Symbolic i) :: vs' -> (
+          print_string "if then else\n";
           let if_possible = Concreteness.try_constraints
                 [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))] in
           let else_possible = Concreteness.try_constraints
@@ -431,6 +432,9 @@ let rec eval (c : config) : value stack =
 
 
 let rec sym_eval (cs : config list) (ss : Z3.Solver.solver list) (acc : (Z3.Model.model * string) list) : (Z3.Model.model * string) list =
+  print_string ("cs: " ^ (string_of_int (List.length cs)) ^ "\n");
+  print_string ("ss: " ^ (String.concat "||" (List.map (fun s -> String.concat "  " (List.map Z3.Expr.to_string (Z3.Solver.get_assertions s))) ss)));
+  print_string "\n";
   match cs with
     [] -> acc
   | c::cs' -> (
@@ -439,6 +443,9 @@ let rec sym_eval (cs : config list) (ss : Z3.Solver.solver list) (acc : (Z3.Mode
         sym_eval cs' (List.tl ss) acc
 
       | vs, {it = Trapping msg; at} :: _ ->
+        print_string "Assertions below:\n";
+        print_string ((String.concat "    " (List.map Z3.Expr.to_string (Z3.Solver.get_assertions (List.hd ss)))) ^ "\n");
+        let _ = Z3.Solver.check (List.hd ss) [] in
         let mdl = valOf (Z3.Solver.get_model (List.hd ss)) in
         sym_eval cs' (List.tl ss) ((mdl, msg)::acc)
 
@@ -475,7 +482,7 @@ let symbolic_invoke (func : func_inst) (vs : value list) : value list =
   (* (\* Have to reset the (global, singleton, imperative) solver from last time *\)
    * let () = Z3.Solver.reset Concreteness.solver in *)
   let errors = sym_eval cs ss [] in
-  List.iter (fun (mdl, msg) -> print_string ("With input model " ^ Z3.Model.to_string mdl ^ " we get the error " ^ msg ^ "\n")) errors;
+  List.iter (fun (mdl, msg) -> print_string ("With input model {" ^ Z3.Model.to_string mdl ^ "} we get the error: " ^ msg ^ "\n")) errors;
   []
 (* TODO Handle Stack_overflow somewhere else *)
   (* try  with
