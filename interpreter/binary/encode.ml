@@ -145,7 +145,7 @@ let encode m =
       | Nop -> op 0x01
 
       | Block (ts, es) -> op 0x02; stack_type ts; list instr es; end_ ()
-      | Loop (ts, es) -> op 0x03; stack_type ts; list instr es; end_ ()
+      | Loop (ts, _, es) -> op 0x03; stack_type ts; list instr es; end_ ()
       | If (ts, es1, es2) ->
         op 0x04; stack_type ts; list instr es1;
         if es2 <> [] then op 0x05;

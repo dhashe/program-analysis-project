@@ -226,7 +226,7 @@ let rec instr e =
     | Drop -> "drop", []
     | Select -> "select", []
     | Block (ts, es) -> "block", stack_type ts @ list instr es
-    | Loop (ts, es) -> "loop", stack_type ts @ list instr es
+    | Loop (ts, _, es) -> "loop", stack_type ts @ list instr es
     | If (ts, es1, es2) ->
       "if", stack_type ts @
         [Node ("then", list instr es1); Node ("else", list instr es2)]

@@ -194,7 +194,7 @@ let rec check_instr (c : context) (e : instr) (s : infer_stack_type) : op_type =
     check_block {c with labels = ts :: c.labels} es ts e.at;
     [] --> ts
 
-  | Loop (ts, es) ->
+  | Loop (ts, _, es) ->
     check_arity (List.length ts) e.at;
     check_block {c with labels = [] :: c.labels} es ts e.at;
     [] --> ts

@@ -27,7 +27,7 @@ exception Exhaustion = Exhaustion.Error
  * end *)
 (* exception Sym_error = SymError.Error *)
 
-exception Sym_no_error (* this path does not lead to an error, try another *)
+let valOf = function Some x -> x | None -> failwith "valOf None"
 
 let memory_error at = function
   | Memory.Bounds -> "out of bounds memory access"
@@ -76,6 +76,14 @@ type config =
   budget : int;  (* to model stack overflow *)
 }
 
+let copy_config c =
+  if c.frame.inst.memories <> [] then failwith "Symbolic: Don't know how to copy memory" else
+    if c.frame.inst.tables <> [] then failwith "Symbolic: Don't know how to copy tables" else
+      let globals' = List.map (fun g -> Global.alloc (Global.type_of g) (Global.load g)) c.frame.inst.globals in
+      let locals' = List.map (fun lr -> ref (!lr)) c.frame.locals in
+      let frame' = {inst = {c.frame.inst with globals = globals'}; locals = locals'} in
+      {c with frame = frame'}
+
 let frame inst locals = {inst; locals}
 let config inst vs es = {frame = frame inst []; code = vs, es; budget = 300}
 
@@ -123,134 +131,159 @@ let drop n (vs : 'a stack) at =
  *   c : config
  *)
 
-let rec step (c : config) : config =
+let rec step (path_idx : int option) (solver : Z3.Solver.solver option) (c : config) : config list * Z3.Solver.solver list option =
   let {frame; code = vs, es; _} = c in
+  let solver' = match solver with Some s -> Some [s] | None -> None in
   let e = List.hd es in
-  let vs', es' =
+  (* let vs', es' = *)
     match e.it, vs with
     | Plain e', vs ->
       (match e', vs with
       | Unreachable, vs ->
-        vs, [Trapping "unreachable executed" @@ e.at]
+        ([{c with code = vs, [Trapping "unreachable executed" @@ e.at] @ List.tl es}], solver')
 
       | Nop, vs ->
-        vs, []
+        ([{c with code = vs, [] @ List.tl es}], solver')
 
       | Block (ts, es'), vs ->
-        vs, [Label (List.length ts, [], ([], List.map plain es')) @@ e.at]
+        ([{c with code = vs, [Label (List.length ts, [], ([], List.map plain es')) @@ e.at] @ List.tl es}], solver')
 
-      (* TODO: Branching, but with somewhat complicated semantics *)
-      | Loop (ts, es'), vs ->
-        vs, [Label (0, [e' @@ e.at], ([], List.map plain es')) @@ e.at]
+      | Loop (ts, use_idx, es'), vs ->
+        ([{c with code = vs, [Label (0, [(Loop (ts, valOf path_idx, es')) @@ e.at], ([], List.map plain es')) @@ e.at] @ List.tl es}], solver')
 
       | If (ts, es1, es2), I32 i :: vs' when i = I32.zero ->
-        vs', [Plain (Block (ts, es2)) @@ e.at]
+        ([{c with code = vs', [Plain (Block (ts, es2)) @@ e.at] @ List.tl es}], solver')
 
       | If (ts, es1, es2), I32 (Concreteness.Concrete i) :: vs' ->
-        vs', [Plain (Block (ts, es1)) @@ e.at]
+        ([{c with code = vs', [Plain (Block (ts, es1)) @@ e.at] @ List.tl es}], solver')
 
        (* DONE: If then else *)
       | If (ts, es1, es2), I32 (Concreteness.Symbolic i) :: vs' -> (
-            match Concreteness.try_constraints
-                    [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)] with
-              Some mdl -> (try (
-                let () = Z3.Solver.push Concreteness.solver in
-                let () = Z3.Solver.add Concreteness.solver
-                    [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)] in
-                vs', [Plain (Block (ts, es2)) @@ e.at]
-              ) with Sym_no_error -> (
-                let () = Z3.Solver.pop Concreteness.solver 1 in
-                let () = Z3.Solver.add Concreteness.solver
-                    [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))] in
-                vs', [Plain (Block (ts, es1)) @@ e.at]
-              ))
-            | None -> (
-                let () = Z3.Solver.add Concreteness.solver
-                    [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))] in
-                vs', [Plain (Block (ts, es1)) @@ e.at]
-              )
+          let if_possible = Concreteness.try_constraints
+                [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))] in
+          let else_possible = Concreteness.try_constraints
+              [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)] in
+          match (if_possible, else_possible) with
+            (Some if_mdl, Some else_mdl) ->
+            let if_config = {(copy_config c) with code = vs', [Plain (Block (ts, es1)) @@ e.at] @ List.tl es} in
+            let else_config = {c with code = vs', [Plain (Block (ts, es2)) @@ e.at] @ List.tl es} in
+            let else_solver = valOf solver in
+            let if_solver = Z3.Solver.translate else_solver Concreteness.ctx in
+            Z3.Solver.add if_solver
+              [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))];
+            Z3.Solver.add else_solver
+              [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)];
+            ([if_config; else_config], Some [if_solver; else_solver])
+
+          | (Some if_mdl, None) ->
+            let if_config = {c with code = vs', [Plain (Block (ts, es1)) @@ e.at] @ List.tl es} in
+            let if_solver = valOf solver in
+            Z3.Solver.add if_solver
+              [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))];
+            ([if_config], Some [if_solver])
+          | (None, Some else_mdl) ->
+            let else_config = {c with code = vs', [Plain (Block (ts, es2)) @@ e.at] @ List.tl es} in
+            let else_solver = valOf solver in
+            Z3.Solver.add else_solver
+              [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)];
+            ([else_config], Some [else_solver])
+          | (None, None) ->
+            ([], Some [])
           )
 
        (* Unconditional branch *)
       | Br x, vs ->
-        [], [Breaking (x.it, vs) @@ e.at]
+        ([{c with code = [], [Breaking (x.it, vs) @@ e.at] @ List.tl es}], solver')
 
       | BrIf x, I32 i :: vs' when i = I32.zero ->
-        vs', []
+        ([{c with code = vs', [] @ List.tl es}], solver')
 
       | BrIf x, I32 (Concreteness.Concrete i) :: vs' ->
-        vs', [Plain (Br x) @@ e.at]
+        ([{c with code = vs', [Plain (Br x) @@ e.at] @ List.tl es}], solver')
 
       (* DONE: Conditional *)
       | BrIf x, I32 (Concreteness.Symbolic i) :: vs' -> (
-            match Concreteness.try_constraints
-                    [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)] with
-              Some mdl -> (try (
-                let () = Z3.Solver.push Concreteness.solver in
-                let () = Z3.Solver.add Concreteness.solver
-                    [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)] in
-                vs', [Plain (Br x) @@ e.at]
-              ) with Sym_no_error -> (
-                let () = Z3.Solver.pop Concreteness.solver 1 in
-                let () = Z3.Solver.add Concreteness.solver
-                    [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))] in
-                vs', [Plain (Br x) @@ e.at]
-              ))
-            | None -> (
-                let () = Z3.Solver.add Concreteness.solver
-                    [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))] in
-                vs', [Plain (Br x) @@ e.at]
-              )
+          let yes_possible = Concreteness.try_constraints
+                [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))] in
+          let no_possible = Concreteness.try_constraints
+              [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)] in
+          match (yes_possible, no_possible) with
+            (Some yes_mdl, Some no_mdl) ->
+            let no_config = {(copy_config c) with code = vs', [] @ List.tl es} in
+            let yes_config = {c with code = vs', [Plain (Br x) @@ e.at] @ List.tl es} in
+            let no_solver = valOf solver in
+            let yes_solver = Z3.Solver.translate no_solver Concreteness.ctx in
+            Z3.Solver.add yes_solver
+              [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))];
+            Z3.Solver.add no_solver
+              [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)];
+            ([no_config; yes_config], Some [no_solver; yes_solver])
+
+          | (Some yes_mdl, None) ->
+            let yes_solver = valOf solver in
+            let yes_config = {c with code = vs', [Plain (Br x) @@ e.at] @ List.tl es} in
+            Z3.Solver.add yes_solver
+              [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))];
+            ([yes_config], Some [yes_solver])
+
+          | (None, Some no_mdl) ->
+            let no_solver = valOf solver in
+            let no_config = {(copy_config c) with code = vs', [] @ List.tl es} in
+            Z3.Solver.add no_solver
+              [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)];
+            ([no_config], Some [no_solver])
+
+          | (None, None) ->
+            ([], Some [])
           )
 
-       (* TODO Branching *)
+      (* TODO: Conditional *)
       | BrTable (xs, x), I32 i :: vs' when Concreteness.was_concrete (I32.ge_u i (I32.of_bits (Lib.List32.length xs))) ->
-        vs', [Plain (Br x) @@ e.at]
+        ([{c with code = vs', [Plain (Br x) @@ e.at] @ List.tl es}], solver')
 
       | BrTable (xs, x), I32 i :: vs' ->
-        vs', [Plain (Br (Lib.List32.nth xs (I32.to_bits i))) @@ e.at]
+        ([{c with code = vs', [Plain (Br (Lib.List32.nth xs (I32.to_bits i))) @@ e.at] @ List.tl es}], solver')
 
        (* Unconditional branch *)
       | Return, vs ->
-        vs, [Returning vs @@ e.at]
+        ([{c with code = vs, [Returning vs @@ e.at] @ List.tl es}], solver')
 
-       (* TODO Branching *)
       | Call x, vs ->
-        vs, [Invoke (func frame.inst x) @@ e.at]
+        ([{c with code = vs, [Invoke (func frame.inst x) @@ e.at] @ List.tl es}], solver')
 
-       (* TODO Branching *)
       | CallIndirect x, I32 i :: vs ->
         let func = func_elem frame.inst (0l @@ e.at) (I32.to_bits i) e.at in
         if type_ frame.inst x <> Func.type_of func then
-          vs, [Trapping "indirect call type mismatch" @@ e.at]
+          ([{c with code = vs, [Trapping "indirect call type mismatch" @@ e.at] @ List.tl es}], solver')
         else
-          vs, [Invoke func @@ e.at]
+          ([{c with code = vs, [Invoke func @@ e.at] @ List.tl es}], solver')
 
       | Drop, v :: vs' ->
-        vs', []
+        ([{c with code = vs', [] @ List.tl es}], solver')
 
+      (* TODO Branching, need to handle symbolic cases *)
       | Select, I32 i :: v2 :: v1 :: vs' when i = I32.zero ->
-        v2 :: vs', []
+        ([{c with code = v2 :: vs', [] @ List.tl es}], solver')
 
       | Select, I32 i :: v2 :: v1 :: vs' ->
-        v1 :: vs', []
+        ([{c with code = v1 :: vs', [] @ List.tl es}], solver')
 
       | LocalGet x, vs ->
-        !(local frame x) :: vs, []
+        ([{c with code = !(local frame x) :: vs, [] @ List.tl es}], solver')
 
       | LocalSet x, v :: vs' ->
         local frame x := v;
-        vs', []
+        ([{c with code = vs', [] @ List.tl es}], solver')
 
       | LocalTee x, v :: vs' ->
         local frame x := v;
-        v :: vs', []
+        ([{c with code = v :: vs', [] @ List.tl es}], solver')
 
       | GlobalGet x, vs ->
-        Global.load (global frame.inst x) :: vs, []
+        ([{c with code = Global.load (global frame.inst x) :: vs, [] @ List.tl es}], solver')
 
       | GlobalSet x, v :: vs' ->
-        (try Global.store (global frame.inst x) v; vs', []
+        (try Global.store (global frame.inst x) v; ([{c with code = vs', [] @ List.tl es}], solver')
         with Global.NotMutable -> Crash.error e.at "write to immutable global"
            | Global.Type -> Crash.error e.at "type mismatch at global write")
 
@@ -262,8 +295,8 @@ let rec step (c : config) : config =
             match sz with
             | None -> Memory.load_value mem (I64.to_bits addr) offset ty
             | Some (sz, ext) -> Memory.load_packed sz ext mem (I64.to_bits addr) offset ty
-          in v :: vs', []
-        with exn -> vs', [Trapping (memory_error e.at exn) @@ e.at])
+          in ([{c with code = v :: vs', [] @ List.tl es}], solver')
+        with exn -> ([{c with code = vs', [Trapping (memory_error e.at exn) @@ e.at] @ List.tl es}], solver'))
 
       | Store {offset; sz; _}, v :: I32 i :: vs' ->
         let mem = memory frame.inst (0l @@ e.at) in
@@ -273,12 +306,12 @@ let rec step (c : config) : config =
           | None -> Memory.store_value mem (I64.to_bits addr) offset v
           | Some sz -> Memory.store_packed sz mem (I64.to_bits addr) offset v
           );
-          vs', []
-        with exn -> vs', [Trapping (memory_error e.at exn) @@ e.at]);
+          ([{c with code = vs', [] @ List.tl es}], solver')
+        with exn -> ([{c with code = vs', [Trapping (memory_error e.at exn) @@ e.at] @ List.tl es}], solver'));
 
       | MemorySize, vs ->
         let mem = memory frame.inst (0l @@ e.at) in
-        I32 (I32.of_bits (Memory.size mem)) :: vs, []
+        ([{c with code = I32 (I32.of_bits (Memory.size mem)) :: vs, [] @ List.tl es}], solver')
 
       | MemoryGrow, I32 delta :: vs' ->
         let mem = memory frame.inst (0l @@ e.at) in
@@ -286,30 +319,30 @@ let rec step (c : config) : config =
         let result =
           try Memory.grow mem (I32.to_bits delta); old_size
           with Memory.SizeOverflow | Memory.SizeLimit | Memory.OutOfMemory -> -1l
-        in I32 (I32.of_bits result) :: vs', []
+        in ([{c with code = I32 (I32.of_bits result) :: vs', [] @ List.tl es}], solver')
 
       | Const v, vs ->
-        v.it :: vs, []
+        ([{c with code = v.it :: vs, [] @ List.tl es}], solver')
 
       | Test testop, v :: vs' ->
-        (try value_of_bool_concreteness (Eval_numeric.eval_testop testop v) :: vs', []
-        with exn -> vs', [Trapping (numeric_error e.at exn) @@ e.at])
+        (try ([{c with code = value_of_bool_concreteness (Eval_numeric.eval_testop testop v) :: vs', [] @ List.tl es}], solver')
+         with exn -> ([{c with code = vs', [Trapping (numeric_error e.at exn) @@ e.at] @ List.tl es}], solver'))
 
       | Compare relop, v2 :: v1 :: vs' ->
-        (try value_of_bool_concreteness (Eval_numeric.eval_relop relop v1 v2) :: vs', []
-        with exn -> vs', [Trapping (numeric_error e.at exn) @@ e.at])
+        (try ([{c with code = value_of_bool_concreteness (Eval_numeric.eval_relop relop v1 v2) :: vs', [] @ List.tl es}], solver')
+        with exn -> ([{c with code = vs', [Trapping (numeric_error e.at exn) @@ e.at] @ List.tl es}], solver'))
 
       | Unary unop, v :: vs' ->
-        (try Eval_numeric.eval_unop unop v :: vs', []
-        with exn -> vs', [Trapping (numeric_error e.at exn) @@ e.at])
+        (try ([{c with code = Eval_numeric.eval_unop unop v :: vs', [] @ List.tl es}], solver')
+        with exn -> ([{c with code = vs', [Trapping (numeric_error e.at exn) @@ e.at] @ List.tl es}], solver'))
 
       | Binary binop, v2 :: v1 :: vs' ->
-        (try Eval_numeric.eval_binop binop v1 v2 :: vs', []
-        with exn -> vs', [Trapping (numeric_error e.at exn) @@ e.at])
+        (try ([{c with code = Eval_numeric.eval_binop binop v1 v2 :: vs', [] @ List.tl es}], solver')
+        with exn -> ([{c with code = vs', [Trapping (numeric_error e.at exn) @@ e.at] @ List.tl es}], solver'))
 
       | Convert cvtop, v :: vs' ->
-        (try Eval_numeric.eval_cvtop cvtop v :: vs', []
-        with exn -> vs', [Trapping (numeric_error e.at exn) @@ e.at])
+        (try ([{c with code = Eval_numeric.eval_cvtop cvtop v :: vs', [] @ List.tl es}], solver')
+        with exn -> ([{c with code = vs', [Trapping (numeric_error e.at exn) @@ e.at] @ List.tl es}], solver'))
 
       | _ ->
         let s1 = string_of_values (List.rev vs) in
@@ -328,41 +361,44 @@ let rec step (c : config) : config =
       Crash.error e.at "undefined label"
 
     | Label (n, es0, (vs', [])), vs ->
-      vs' @ vs, []
+      ([{c with code = vs' @ vs, [] @ List.tl es}], solver')
 
     | Label (n, es0, (vs', {it = Trapping msg; at} :: es')), vs ->
-      vs, [Trapping msg @@ at]
+      ([{c with code = vs, [Trapping msg @@ at] @ List.tl es}], solver')
 
-    | Label (n, es0, (vs', {it = Returning vs0; at} :: es')), vs ->
-      vs, [Returning vs0 @@ at]
+    | Label (n, [{it = Loop (_, use_idx, _); at = _}], (vs', {it = Returning vs0; at} :: es')), vs when (Some use_idx) = path_idx ->
+      (* We've already taken this branch, so we won't take it again *)
+      ([], Some [])
 
     | Label (n, es0, (vs', {it = Breaking (0l, vs0); at} :: es')), vs ->
-      take n vs0 e.at @ vs, List.map plain es0
+      ([{c with code = take n vs0 e.at @ vs, List.map plain es0 @ List.tl es}], solver')
 
     | Label (n, es0, (vs', {it = Breaking (k, vs0); at} :: es')), vs ->
-      vs, [Breaking (Int32.sub k 1l, vs0) @@ at]
+      ([{c with code = vs, [Breaking (Int32.sub k 1l, vs0) @@ at] @ List.tl es}], solver')
 
     | Label (n, es0, code'), vs ->
-      let c' = step {c with code = code'} in
-      vs, [Label (n, es0, c'.code) @@ e.at]
+      let (cs', ss') = step path_idx solver {c with code = code'} in
+      let configs = List.map (fun c' -> {c with code = vs, [Label (n, es0, c'.code) @@ e.at] @ List.tl es}) cs' in
+      (configs, ss')
 
     | Frame (n, frame', (vs', [])), vs ->
-      vs' @ vs, []
+      ([{c with code = vs' @ vs, [] @ List.tl es}], solver')
 
     | Frame (n, frame', (vs', {it = Trapping msg; at} :: es')), vs ->
-      vs, [Trapping msg @@ at]
+      ([{c with code = vs, [Trapping msg @@ at] @ List.tl es}], solver')
 
     | Frame (n, frame', (vs', {it = Returning vs0; at} :: es')), vs ->
-      take n vs0 e.at @ vs, []
+      ([{c with code = take n vs0 e.at @ vs, [] @ List.tl es}], solver')
 
     | Frame (n, frame', code'), vs ->
-      let c' = step {frame = frame'; code = code'; budget = c.budget - 1} in
-      vs, [Frame (n, c'.frame, c'.code) @@ e.at]
+      let (cs', ss') = step path_idx solver {frame = frame'; code = code'; budget = c.budget - 1} in
+      let configs = List.map (fun c' -> {c with code = vs, [Frame (n, c'.frame, c'.code) @@ e.at] @ List.tl es}) cs' in
+      (configs, ss')
 
     | Invoke func, vs when c.budget = 0 ->
       Exhaustion.error e.at "call stack exhausted"
 
-       (* TODO Branching *)
+       (* DONE Branching *)
     | Invoke func, vs ->
       let FuncType (ins, out) = Func.type_of func in
       let n = List.length ins in
@@ -372,13 +408,13 @@ let rec step (c : config) : config =
         let locals' = List.rev args @ List.map default_value f.it.locals in
         let code' = [], [Plain (Block (out, f.it.body)) @@ f.at] in
         let frame' = {inst = !inst'; locals = List.map ref locals'} in
-        vs', [Frame (List.length out, frame', code') @@ e.at]
+        ([{c with code = vs', [Frame (List.length out, frame', code') @@ e.at] @ List.tl es}], solver')
 
       | Func.HostFunc (t, f) ->
-        try List.rev (f (List.rev args)) @ vs', []
+        try ([{c with code = List.rev (f (List.rev args)) @ vs', [] @ List.tl es}], solver')
         with Crash (_, msg) -> Crash.error e.at msg
       )
-  in {c with code = vs', es' @ List.tl es}
+  (* in {c with code = vs', es' @ List.tl es} *)
 
 
 let rec eval (c : config) : value stack =
@@ -390,22 +426,26 @@ let rec eval (c : config) : value stack =
     Trap.error at msg
 
   | vs, es ->
-    eval (step c)
+    let (cs, ss) = step None None c in
+    eval (List.hd cs)
 
 
-let rec sym_eval (c : config) : value stack =
-  (* TODO Symbolic evaluation systematically tries paths through
-     an Exception Passing Style Depth First Search until it finds
-     an error or runs out of reasonable paths. *)
-  match c.code with
-  | vs, [] ->
-    raise Sym_no_error
+let rec sym_eval (cs : config list) (ss : Z3.Solver.solver list) (acc : (Z3.Model.model * string) list) : (Z3.Model.model * string) list =
+  match cs with
+    [] -> acc
+  | c::cs' -> (
+      match c.code with
+        vs, [] -> print_string "ran a path to completion\n";
+        sym_eval cs' (List.tl ss) acc
 
-  | vs, {it = Trapping msg; at} :: _ ->
-    Trap.error at msg
+      | vs, {it = Trapping msg; at} :: _ ->
+        let mdl = valOf (Z3.Solver.get_model (List.hd ss)) in
+        sym_eval cs' (List.tl ss) ((mdl, msg)::acc)
 
-  | vs, es ->
-    sym_eval (step c)
+      | vs, es ->
+        let (child_cs, child_ss) = step (Some (List.length cs)) (Some (List.hd ss)) c in
+        sym_eval (child_cs @ cs') (valOf child_ss @ (List.tl ss)) acc
+    )
 
 
 (* Functions & Constants *)
@@ -430,12 +470,16 @@ let symbolic_invoke (func : func_inst) (vs : value list) : value list =
   let FuncType (ins, out) = Func.type_of func in
   if List.map Values.type_of vs <> ins then
     Crash.error at "wrong number or types of arguments";
-  let c = config empty_module_inst (List.rev vs) [Invoke func @@ at] in
-  (* Have to reset the solver from last time *)
-  let () = Z3.Solver.reset Concreteness.solver in
-  try List.rev (sym_eval c) with
-    Stack_overflow -> Exhaustion.error at "call stack exhausted"
-  | Sym_no_error -> [] (* No error, so just return [] *)
+  let cs = [config empty_module_inst (List.rev vs) [Invoke func @@ at]] in
+  let ss = [Z3.Solver.mk_solver Concreteness.ctx None] in
+  (* (\* Have to reset the (global, singleton, imperative) solver from last time *\)
+   * let () = Z3.Solver.reset Concreteness.solver in *)
+  let errors = sym_eval cs ss [] in
+  List.iter (fun (mdl, msg) -> print_string ("With input model " ^ Z3.Model.to_string mdl ^ " we get the error " ^ msg ^ "\n")) errors;
+  []
+(* TODO Handle Stack_overflow somewhere else *)
+  (* try  with
+   *   Stack_overflow -> Exhaustion.error at "call stack exhausted" *)
 
 let eval_const (inst : module_inst) (const : const) : value =
   let c = config inst [] (List.map plain const.it) in

@@ -16,9 +16,8 @@ type extension = SX | ZX
 
 type memory' = (int, int8_unsigned_elt, c_layout) Array1.t
 type memory = {mutable content : memory'; max : size option;
-               (* TODO Not really sure about the types below. Why are addresses here 64 bit? *)
-               (* Conceptually: (address, size, content) list option *)
-               mutable symbolic_log : (address * size) list option}
+               mutable log : (address, bool) Hashtbl.t;
+               mutable symbolic_content : Z3.Expr.expr option}
 type t = memory
 
 exception Type
@@ -51,7 +50,7 @@ let alloc (MemoryType {min; max}) =
   let mint = I32.of_bits min in
   let maxt = match max with None -> None | Some v -> Some (I32.of_bits v) in
   assert (within_limits mint maxt);
-  {content = create mint; max; symbolic_log = None}
+  {content = create mint; max; log = Hashtbl.create 10; symbolic_content = None}
 
 let bound mem =
   Array1_64.dim mem.content
@@ -73,12 +72,12 @@ let grow mem delta =
   mem.content <- after
 
 let load_byte mem a =
-  match mem.symbolic_log with
+  match mem.symbolic_content with
   | Some sym_log -> failwith "TODO Implement sym_log"
   | None -> (try Array1_64.get mem.content a with Invalid_argument _ -> raise Bounds)
 
 let store_byte mem a b =
-  match mem.symbolic_log with
+  match mem.symbolic_content with
   | Some sym_log -> failwith "TODO Implement sym_log"
   | None -> (try Array1_64.set mem.content a b with Invalid_argument _ -> raise Bounds)
 
