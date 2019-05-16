@@ -238,12 +238,44 @@ let rec step (path_idx : int option) (solver : Z3.Solver.solver option) (c : con
             ([], Some [])
           )
 
-      (* TODO: Conditional *)
-      | BrTable (xs, x), I32 i :: vs' when Concreteness.was_concrete (I32.ge_u i (I32.of_bits (Lib.List32.length xs))) ->
+      | BrTable (xs, x), I32 ((Concreteness.Concrete _) as i) :: vs'
+        when Concreteness.was_concrete (I32.ge_u i (I32.of_bits (Lib.List32.length xs))) ->
         ([{c with code = vs', [Plain (Br x) @@ e.at] @ List.tl es}], solver')
 
-      | BrTable (xs, x), I32 i :: vs' ->
+      | BrTable (xs, x), I32 ((Concreteness.Concrete _) as i) :: vs' ->
         ([{c with code = vs', [Plain (Br (Lib.List32.nth xs (I32.to_bits i))) @@ e.at] @ List.tl es}], solver')
+
+      (* TODO: Conditional *)
+      | BrTable (xs, x), I32 ((Concreteness.Symbolic j) as i) :: vs' -> (
+        let default_possible = (Concreteness.try_constraints [Concreteness.was_symbolic (I32.ge_u i (I32.of_bits (Lib.List32.length xs)))]) in
+        let idx_possible = List.filter
+            (function (k, Some _) -> true | (k, None) -> false)
+            (List.mapi (fun k _ -> (k, Concreteness.try_constraints [Concreteness.was_symbolic (I32.eq i (I32.of_bits (Int32.of_int k)))])) xs) in
+        match (default_possible, idx_possible) with
+          (None, []) -> ([], Some [])
+
+        | (None, (m,_)::idx_possible') ->
+        let idx_configs = List.map
+            (fun (k, _) -> {(copy_config c) with code = vs', [Plain (Br (Lib.List32.nth xs (Int32.of_int k))) @@ e.at] @ List.tl es})
+            idx_possible' in
+        let fst_config = {c with code = vs', [Plain (Br (Lib.List32.nth xs (Int32.of_int m))) @@ e.at] @ List.tl es} in
+        let fst_solver = valOf solver in
+        let idx_solvers = List.map (fun (k, _)-> (k, Z3.Solver.translate fst_solver Concreteness.ctx)) idx_possible in
+        Z3.Solver.add fst_solver [Concreteness.was_symbolic (I32.ge_u i (I32.of_bits (Lib.List32.length xs)))];
+        List.iter (fun (k, s) -> Z3.Solver.add s [Concreteness.was_symbolic (I32.eq i (I32.of_bits (Int32.of_int k)))]) idx_solvers;
+        (fst_config :: idx_configs, Some (fst_solver :: List.map (fun (x,y) -> y) idx_solvers))
+
+        | (Some dft_mdl, _) ->
+        let idx_configs = List.map
+            (fun (k, _) -> {(copy_config c) with code = vs', [Plain (Br (Lib.List32.nth xs (Int32.of_int k))) @@ e.at] @ List.tl es})
+            idx_possible in
+        let dft_config = {c with code = vs', [Plain (Br x) @@ e.at] @ List.tl es} in
+        let dft_solver = valOf solver in
+        let idx_solvers = List.map (fun (k, _) -> (k, Z3.Solver.translate dft_solver Concreteness.ctx)) idx_possible in
+        Z3.Solver.add dft_solver [Concreteness.was_symbolic (I32.ge_u i (I32.of_bits (Lib.List32.length xs)))];
+        List.iter (fun (k, s) -> Z3.Solver.add s [Concreteness.was_symbolic (I32.eq i (I32.of_bits (Int32.of_int k)))]) idx_solvers;
+        (dft_config :: idx_configs, Some (dft_solver :: List.map (fun (x,y) -> y) idx_solvers))
+      )
 
        (* Unconditional branch *)
       | Return, vs ->
@@ -263,11 +295,14 @@ let rec step (path_idx : int option) (solver : Z3.Solver.solver option) (c : con
         ([{c with code = vs', [] @ List.tl es}], solver')
 
       (* TODO Branching, need to handle symbolic cases *)
-      | Select, I32 i :: v2 :: v1 :: vs' when i = I32.zero ->
+      | Select, I32 ((Concreteness.Concrete _) as i) :: v2 :: v1 :: vs' when i = I32.zero ->
         ([{c with code = v2 :: vs', [] @ List.tl es}], solver')
 
-      | Select, I32 i :: v2 :: v1 :: vs' ->
+      | Select, I32 (Concreteness.Concrete _) :: v2 :: v1 :: vs' ->
         ([{c with code = v1 :: vs', [] @ List.tl es}], solver')
+
+      | Select, I32 (Concreteness.Symbolic j) :: v2 :: v1 :: vs' ->
+        failwith "TODO Implement"
 
       | LocalGet x, vs ->
         ([{c with code = !(local frame x) :: vs, [] @ List.tl es}], solver')

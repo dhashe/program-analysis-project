@@ -4,6 +4,10 @@ let was_concrete x = match x with
     Concrete y -> y
   | Symbolic _ -> failwith "Was not concrete"
 
+let was_symbolic x = match x with
+    Concrete _ -> failwith "Was not symbolic"
+  | Symbolic y -> y
+
 let ctx = Z3.mk_context []
 
 let solver = Z3.Solver.mk_solver ctx None
