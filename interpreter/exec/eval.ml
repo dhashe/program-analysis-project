@@ -160,14 +160,14 @@ let rec step (path_idx : int option) (solver : Z3.Solver.solver option) (c : con
 
        (* DONE: If then else *)
       | If (ts, es1, es2), I32 (Concreteness.Symbolic i) :: vs' -> (
-          print_string "if then else\n";
+          (* print_string "if then else\n"; *)
           let if_possible = Concreteness.try_constraints (valOf solver)
                 [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))] in
           let else_possible = Concreteness.try_constraints (valOf solver)
               [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)] in
           match (if_possible, else_possible) with
             (Some if_mdl, Some else_mdl) ->
-            print_string "both possible\n";
+            (* print_string "both possible\n"; *)
             let if_config = {(copy_config c) with code = vs', [Plain (Block (ts, es1)) @@ e.at] @ List.tl es} in
             let else_config = {c with code = vs', [Plain (Block (ts, es2)) @@ e.at] @ List.tl es} in
             let else_solver = valOf solver in
@@ -179,21 +179,21 @@ let rec step (path_idx : int option) (solver : Z3.Solver.solver option) (c : con
             ([if_config; else_config], Some [if_solver; else_solver])
 
           | (Some if_mdl, None) ->
-            print_string "if possible\n";
+            (* print_string "if possible\n"; *)
             let if_config = {c with code = vs', [Plain (Block (ts, es1)) @@ e.at] @ List.tl es} in
             let if_solver = valOf solver in
             Z3.Solver.add if_solver
               [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))];
             ([if_config], Some [if_solver])
           | (None, Some else_mdl) ->
-            print_string "else possible\n";
+            (* print_string "else possible\n"; *)
             let else_config = {c with code = vs', [Plain (Block (ts, es2)) @@ e.at] @ List.tl es} in
             let else_solver = valOf solver in
             Z3.Solver.add else_solver
               [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)];
             ([else_config], Some [else_solver])
           | (None, None) ->
-            print_string "neither possible\n";
+            (* print_string "neither possible\n"; *)
             ([], Some [])
           )
 
@@ -479,14 +479,14 @@ let rec eval (c : config) : value stack =
 
 
 let rec sym_eval (cs : config list) (ss : Z3.Solver.solver list) (acc : (Z3.Model.model * string) list) : (Z3.Model.model * string) list =
-  print_string ("cs: " ^ (string_of_int (List.length cs)) ^ "\n");
-  print_string ("ss: " ^ (String.concat "||" (List.map (fun s -> String.concat "  " (List.map Z3.Expr.to_string (Z3.Solver.get_assertions s))) ss)));
-  print_string "\n";
+  (* print_string ("cs: " ^ (string_of_int (List.length cs)) ^ "\n");
+   * print_string ("ss: " ^ (String.concat "||" (List.map (fun s -> String.concat "  " (List.map Z3.Expr.to_string (Z3.Solver.get_assertions s))) ss)));
+   * print_string "\n"; *)
   match cs with
     [] -> acc
   | c::cs' -> (
       match c.code with
-        vs, [] -> print_string "ran a path to completion\n";
+        vs, [] -> (* print_string "ran a path to completion\n"; *)
         sym_eval cs' (List.tl ss) acc
 
       | vs, {it = Trapping msg; at} :: _ ->
