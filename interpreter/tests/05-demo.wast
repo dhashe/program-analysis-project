@@ -24,4 +24,4 @@
 (symbolic_invoke "div" (i32.sym %x) (i32.sym %y)) ;; Divide by zero
 (symbolic_invoke "safediv" (i32.sym %x) (i32.sym %y)) ;; No divide by zero
 (symbolic_invoke "reach" (i32.sym %x)) ;; Unreachable
-(symbolic_invoke "infinite_loop" (i32.sym %x)) ;; No errors, algorithm detects loop and stops
+(symbolic_invoke "infinite_loop") ;; No errors, algorithm detects loop and stops
