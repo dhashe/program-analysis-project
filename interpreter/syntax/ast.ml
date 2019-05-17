@@ -74,7 +74,7 @@ and instr' =
   | Drop                              (* forget a value *)
   | Select                            (* branchless conditional *)
   | Block of stack_type * instr list  (* execute in sequence *)
-  | Loop of stack_type * int * instr list  (* loop header *)
+  | Loop of stack_type * int option * instr list  (* loop header *)
   | If of stack_type * instr list * instr list  (* conditional *)
   | Br of var                         (* break to n-th surrounding label *)
   | BrIf of var                       (* conditional break *)

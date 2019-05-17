@@ -140,6 +140,7 @@ let rec step (path_idx : int option) (solver : Z3.Solver.solver option) (c : con
     | Plain e', vs ->
       (match e', vs with
       | Unreachable, vs ->
+        (* print_string "AT UNREACHABLE\n"; *)
         ([{c with code = vs, [Trapping "unreachable executed" @@ e.at] @ List.tl es}], solver')
 
       | Nop, vs ->
@@ -149,7 +150,7 @@ let rec step (path_idx : int option) (solver : Z3.Solver.solver option) (c : con
         ([{c with code = vs, [Label (List.length ts, [], ([], List.map plain es')) @@ e.at] @ List.tl es}], solver')
 
       | Loop (ts, use_idx, es'), vs ->
-        ([{c with code = vs, [Label (0, [(Loop (ts, valOf path_idx, es')) @@ e.at], ([], List.map plain es')) @@ e.at] @ List.tl es}], solver')
+        ([{c with code = vs, [Label (0, [(Loop (ts, path_idx, es')) @@ e.at], ([], List.map plain es')) @@ e.at] @ List.tl es}], solver')
 
       | If (ts, es1, es2), I32 i :: vs' when i = I32.zero ->
         ([{c with code = vs', [Plain (Block (ts, es2)) @@ e.at] @ List.tl es}], solver')
@@ -160,12 +161,13 @@ let rec step (path_idx : int option) (solver : Z3.Solver.solver option) (c : con
        (* DONE: If then else *)
       | If (ts, es1, es2), I32 (Concreteness.Symbolic i) :: vs' -> (
           print_string "if then else\n";
-          let if_possible = Concreteness.try_constraints
+          let if_possible = Concreteness.try_constraints (valOf solver)
                 [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))] in
-          let else_possible = Concreteness.try_constraints
+          let else_possible = Concreteness.try_constraints (valOf solver)
               [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)] in
           match (if_possible, else_possible) with
             (Some if_mdl, Some else_mdl) ->
+            print_string "both possible\n";
             let if_config = {(copy_config c) with code = vs', [Plain (Block (ts, es1)) @@ e.at] @ List.tl es} in
             let else_config = {c with code = vs', [Plain (Block (ts, es2)) @@ e.at] @ List.tl es} in
             let else_solver = valOf solver in
@@ -177,18 +179,21 @@ let rec step (path_idx : int option) (solver : Z3.Solver.solver option) (c : con
             ([if_config; else_config], Some [if_solver; else_solver])
 
           | (Some if_mdl, None) ->
+            print_string "if possible\n";
             let if_config = {c with code = vs', [Plain (Block (ts, es1)) @@ e.at] @ List.tl es} in
             let if_solver = valOf solver in
             Z3.Solver.add if_solver
               [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))];
             ([if_config], Some [if_solver])
           | (None, Some else_mdl) ->
+            print_string "else possible\n";
             let else_config = {c with code = vs', [Plain (Block (ts, es2)) @@ e.at] @ List.tl es} in
             let else_solver = valOf solver in
             Z3.Solver.add else_solver
               [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)];
             ([else_config], Some [else_solver])
           | (None, None) ->
+            print_string "neither possible\n";
             ([], Some [])
           )
 
@@ -204,9 +209,9 @@ let rec step (path_idx : int option) (solver : Z3.Solver.solver option) (c : con
 
       (* DONE: Conditional *)
       | BrIf x, I32 (Concreteness.Symbolic i) :: vs' -> (
-          let yes_possible = Concreteness.try_constraints
+          let yes_possible = Concreteness.try_constraints (valOf solver)
                 [Z3.Boolean.mk_not Concreteness.ctx (Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32))] in
-          let no_possible = Concreteness.try_constraints
+          let no_possible = Concreteness.try_constraints (valOf solver)
               [Z3.Boolean.mk_eq Concreteness.ctx i (Z3.BitVector.mk_numeral Concreteness.ctx "0" 32)] in
           match (yes_possible, no_possible) with
             (Some yes_mdl, Some no_mdl) ->
@@ -247,10 +252,10 @@ let rec step (path_idx : int option) (solver : Z3.Solver.solver option) (c : con
 
       (* TODO: Conditional *)
       | BrTable (xs, x), I32 ((Concreteness.Symbolic j) as i) :: vs' -> (
-        let default_possible = (Concreteness.try_constraints [Concreteness.was_symbolic (I32.ge_u i (I32.of_bits (Lib.List32.length xs)))]) in
+        let default_possible = (Concreteness.try_constraints (valOf solver) [Concreteness.was_symbolic (I32.ge_u i (I32.of_bits (Lib.List32.length xs)))]) in
         let idx_possible = List.filter
             (function (k, Some _) -> true | (k, None) -> false)
-            (List.mapi (fun k _ -> (k, Concreteness.try_constraints [Concreteness.was_symbolic (I32.eq i (I32.of_bits (Int32.of_int k)))])) xs) in
+            (List.mapi (fun k _ -> (k, Concreteness.try_constraints (valOf solver) [Concreteness.was_symbolic (I32.eq i (I32.of_bits (Int32.of_int k)))])) xs) in
         match (default_possible, idx_possible) with
           (None, []) -> ([], Some [])
 
@@ -402,7 +407,14 @@ let rec step (path_idx : int option) (solver : Z3.Solver.solver option) (c : con
     | Label (n, es0, (vs', {it = Trapping msg; at} :: es')), vs ->
       ([{c with code = vs, [Trapping msg @@ at] @ List.tl es}], solver')
 
-    | Label (n, [{it = Loop (_, use_idx, _); at = _}], (vs', {it = Returning vs0; at} :: es')), vs when (Some use_idx) = path_idx ->
+    | Label (n, [{it = Loop (_, use_idx, _); at = _}], (vs', {it = Returning vs0; at} :: es')), vs when use_idx = path_idx ->
+      (* We've already taken this branch, so we won't take it again *)
+      ([], Some [])
+
+    | Label (n, es0, (vs', {it = Returning vs0; at} :: es')), vs ->
+      ([{c with code = vs, [Returning vs0 @@ at] @ List.tl es}], solver')
+
+    | Label (n, [{it = Loop (_, use_idx, _); at = _}], (vs', {it = Breaking (0l, vs0); at} :: es')), vs when use_idx = path_idx ->
       (* We've already taken this branch, so we won't take it again *)
       ([], Some [])
 
@@ -478,8 +490,8 @@ let rec sym_eval (cs : config list) (ss : Z3.Solver.solver list) (acc : (Z3.Mode
         sym_eval cs' (List.tl ss) acc
 
       | vs, {it = Trapping msg; at} :: _ ->
-        print_string "Assertions below:\n";
-        print_string ((String.concat "    " (List.map Z3.Expr.to_string (Z3.Solver.get_assertions (List.hd ss)))) ^ "\n");
+        (* print_string "Assertions below:\n";
+         * print_string ((String.concat "    " (List.map Z3.Expr.to_string (Z3.Solver.get_assertions (List.hd ss)))) ^ "\n"); *)
         let _ = Z3.Solver.check (List.hd ss) [] in
         let mdl = valOf (Z3.Solver.get_model (List.hd ss)) in
         sym_eval cs' (List.tl ss) ((mdl, msg)::acc)
@@ -514,10 +526,11 @@ let symbolic_invoke (func : func_inst) (vs : value list) : value list =
     Crash.error at "wrong number or types of arguments";
   let cs = [config empty_module_inst (List.rev vs) [Invoke func @@ at]] in
   let ss = [Z3.Solver.mk_solver Concreteness.ctx None] in
+  let () = Concreteness.solver := Some (List.hd ss) in
   (* (\* Have to reset the (global, singleton, imperative) solver from last time *\)
    * let () = Z3.Solver.reset Concreteness.solver in *)
   let errors = sym_eval cs ss [] in
-  List.iter (fun (mdl, msg) -> print_string ("With input model {" ^ Z3.Model.to_string mdl ^ "} we get the error: " ^ msg ^ "\n")) errors;
+  List.iter (fun (mdl, msg) -> print_string ("With input model {" ^ Z3.Model.to_string mdl ^ "} we get the error: " ^ msg ^ "\n\n")) errors;
   []
 (* TODO Handle Stack_overflow somewhere else *)
   (* try  with

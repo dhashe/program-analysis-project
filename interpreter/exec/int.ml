@@ -1,3 +1,5 @@
+let valOf = function Some x -> x | None -> failwith "valOf None"
+
 module type RepType =
 sig
   type t
@@ -187,13 +189,13 @@ struct
       Rep.div x y
   let div_s'' x y =
     (* DONE Handle divide-by-zero and integer-overflow conditions (different paths / not straightline) *)
-    match Concreteness.try_constraints [Z3.Boolean.mk_eq C.ctx y (Z3.BitVector.mk_numeral C.ctx "0" (Rep.bitwidth))] with
+    (* match Concreteness.try_constraints (valOf (!C.solver)) [Z3.Boolean.mk_eq C.ctx y (Z3.BitVector.mk_numeral C.ctx "0" (Rep.bitwidth))] with
       Some mdl -> raise Numeric_error.IntegerDivideByZero
-    | None -> (match Concreteness.try_constraints
+    | None -> (match Concreteness.try_constraints (valOf (!C.solver))
                        [Z3.Boolean.mk_eq C.ctx x (Z3.BitVector.mk_numeral C.ctx (Rep.to_string Rep.min_int) (Rep.bitwidth));
                         Z3.Boolean.mk_eq C.ctx y (Z3.BitVector.mk_numeral C.ctx (Rep.to_string Rep.minus_one) (Rep.bitwidth))] with
                 Some mdl -> raise Numeric_error.IntegerOverflow
-              | None -> Z3.BitVector.mk_sdiv C.ctx x y)
+              | None -> *) Z3.BitVector.mk_sdiv C.ctx x y (* ) *)
  
   let div_s = cased_binop div_s' div_s''
 
@@ -202,9 +204,9 @@ struct
     let q, r = divrem_u x y in q
   let div_u'' x y =
     (* DONE Handle divide-by-zero condition (different paths / not straightline) *)
-    match Concreteness.try_constraints [Z3.Boolean.mk_eq C.ctx y (Z3.BitVector.mk_numeral C.ctx "0" (Rep.bitwidth))] with
+    (* match Concreteness.try_constraints (valOf (!C.solver)) [Z3.Boolean.mk_eq C.ctx y (Z3.BitVector.mk_numeral C.ctx "0" (Rep.bitwidth))] with
       Some mdl -> raise Numeric_error.IntegerDivideByZero
-    | None -> Z3.BitVector.mk_udiv C.ctx x y
+     | None -> *) Z3.BitVector.mk_udiv C.ctx x y
 
   let div_u = cased_binop div_u' div_u''
 
@@ -216,18 +218,18 @@ struct
       Rep.rem x y
   let rem_s'' x y =
     (* DONE Handle divide-by-zero (different paths / not straightline) *)
-      match Concreteness.try_constraints [Z3.Boolean.mk_eq C.ctx y (Z3.BitVector.mk_numeral C.ctx "0" (Rep.bitwidth))] with
+    (* match Concreteness.try_constraints (valOf (!C.solver)) [Z3.Boolean.mk_eq C.ctx y (Z3.BitVector.mk_numeral C.ctx "0" (Rep.bitwidth))] with
         Some mdl -> raise Numeric_error.IntegerDivideByZero
-      | None -> Z3.BitVector.mk_srem C.ctx x y
+       | None -> *) Z3.BitVector.mk_srem C.ctx x y
   let rem_s = cased_binop rem_s' rem_s''
 
   let rem_u' x y =
     let q, r = divrem_u x y in r
   let rem_u'' x y =
     (* DONE Handle divide-by-zero (different paths / not straightline) *)
-      match Concreteness.try_constraints [Z3.Boolean.mk_eq C.ctx y (Z3.BitVector.mk_numeral C.ctx "0" (Rep.bitwidth))] with
+      (* match Concreteness.try_constraints (valOf (!C.solver)) [Z3.Boolean.mk_eq C.ctx y (Z3.BitVector.mk_numeral C.ctx "0" (Rep.bitwidth))] with
         Some mdl -> raise Numeric_error.IntegerDivideByZero
-      | None -> Z3.BitVector.mk_urem C.ctx x y
+      | None -> *) Z3.BitVector.mk_urem C.ctx x y
   let rem_u = cased_binop rem_u' rem_u''
 
   let and_ = cased_binop Rep.logand (Z3.BitVector.mk_and C.ctx)
